@@ -76,8 +76,11 @@
 //!     ]
 //!     .into_iter();
 //!
+//!     // Create a portal
 //!     let (front, back) = InOutPortal::new();
+//!     // Create the future that represents the work (requires pinning for technical reasons)
 //!     let future = pin!(parse_and_find(back, "Jo"));
+//!     // Create the coroutine
 //!     let mut parser = Coro::new(front, future);
 //!
 //!     let mut yielded = Vec::new();
@@ -96,6 +99,7 @@
 //!                 }
 //!             }
 //!             CoroPoll::Result(result) => match result {
+//!                 // The coroutine has finished; handle the result.
 //!                 Ok(count) => {
 //!                     match_count = count;
 //!                     break;
@@ -129,12 +133,9 @@
 //! provide different abilities. They dictate how the caller and callee can communicate (e.g. via
 //! input and output events).
 //!
-//! Finally, [`Coro`] unifies these concepts and provides an ergonomic interface for interacting
-//! with the coroutine. Generally the calling code has the following structure in a loop:
-//!
-//! - Drive (advance) the coroutine and process the yielded output events.
-//! - Check for completion.
-//! - Provide the next input event.
+//! [`Coro`] provides an ergonomic interface for driving the coroutine state and handling events
+//! that occur. The type of events that can occur depend on the [`Portal`](portal::Portal)
+//! implementation.
 
 pub mod portal;
 
