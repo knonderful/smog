@@ -5,9 +5,8 @@
 //! # Example
 //!
 //! ```
-//! use smog::Coro;
-//! use smog::portal::Portal;
-//! use smog::portal::event::{InOutPortal, InOutBack, InOutEvent};
+//! use smog::{Coro, CoroPoll};
+//! use smog::portal::event::{InOutBack, InOutEvent};
 //! use std::pin::pin;
 //!
 //! /// Fictional output of a tokenizer.
@@ -59,7 +58,6 @@
 //! }
 //!
 //! fn main() {
-//!     use smog::CoroPoll;
 //!
 //! let mut input = vec![
 //! #        Token::SectionStart("users".to_string()),
@@ -76,12 +74,11 @@
 //!     ]
 //!     .into_iter();
 //!
-//!     // Create a portal
-//!     let (front, back) = InOutPortal::new();
-//!     // Create the future that represents the work (requires pinning for technical reasons)
-//!     let future = pin!(parse_and_find(back, "Jo"));
-//!     // Create the coroutine
-//!     let mut parser = Coro::new(front, future);
+//!     // Create the coroutine with the future that represents the work
+//!     let coro = smog::coro_from_fn(|back| parse_and_find(back, "Jo"));
+//!     // We need to pin the coro for technical reasons. Can be either on the heap with Box::pin() or on the stack,
+//!     // like so:
+//!     let mut parser = pin!(coro);
 //!
 //!     let mut yielded = Vec::new();
 //!     let match_count;
@@ -91,7 +88,7 @@
 //!             CoroPoll::Event(io_evt) => match io_evt {
 //!                 InOutEvent::Awaiting => {
 //!                     // The coroutine is waiting for input. We provide it through the portal.
-//!                     parser.portal_mut().provide(input.next().expect("Ran out of input"));
+//!                     parser.portal().provide(input.next().expect("Ran out of input"));
 //!                 }
 //!                 InOutEvent::Yielded(val) => {
 //!                     // The coroutine yielded output.
@@ -140,30 +137,27 @@
 mod cell;
 pub mod portal;
 
-use crate::portal::PortalFront;
+use crate::portal::{PortalBack, PortalFront};
 use std::future::Future;
-use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::ptr;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 pub struct Coro<P, F>
 where
-    F: Deref,
-    F::Target: Future,
+    F: Future,
 {
     portal: P,
-    future: Pin<F>,
+    future: F,
     waker: Waker,
-    state: CoroState<<<F as Deref>::Target as Future>::Output>,
+    state: CoroState<F::Output>,
 }
 
 impl<P, F> Coro<P, F>
 where
-    F: DerefMut,
-    F::Target: Future,
+    F: Future,
 {
-    pub fn new(portal: P, future: Pin<F>) -> Self {
+    pub fn new(portal: P, future: F) -> Self {
         Self {
             portal,
             future,
@@ -172,32 +166,44 @@ where
         }
     }
 
-    pub fn portal_mut(&mut self) -> &mut P {
-        &mut self.portal
+    pub fn portal<'a, 'b>(self: &'a mut Pin<&'b mut Self>) -> &'a mut P {
+        // SAFETY: We're not moving `self` in our code.
+        let this = unsafe { Pin::get_unchecked_mut(self.as_mut()) };
+        &mut this.portal
     }
+}
+
+pub fn coro_from_fn<B: PortalBack, F: Future>(future_fn: impl FnOnce(B) -> F) -> Coro<B::Front, F> {
+    let (front, back) = B::new_portal();
+    let future = future_fn(back);
+    Coro::new(front, future)
 }
 
 impl<P, F> Coro<P, F>
 where
     P: PortalFront,
-    F: DerefMut,
-    F::Target: Future,
+    F: Future,
 {
     #[must_use]
-    pub fn poll(&mut self) -> CoroPoll<P::Event, <F::Target as Future>::Output> {
-        if let Some(event) = self.portal.poll() {
+    pub fn poll(self: &mut Pin<&mut Self>) -> CoroPoll<P::Event, F::Output> {
+        // SAFETY: We're not moving `self` in our code.
+        let this = unsafe { Pin::get_unchecked_mut(self.as_mut()) };
+        if let Some(event) = this.portal.poll() {
             return CoroPoll::Event(event);
         }
 
-        match &self.state {
+        match &this.state {
             CoroState::InProgress => {
                 // Drive the future
-                let mut poll_ctx = Context::from_waker(&self.waker);
-                match self.future.as_mut().poll(&mut poll_ctx) {
+                let mut poll_ctx = Context::from_waker(&this.waker);
+
+                // SAFETY: This is OK because `self` is pinned.
+                let pin = unsafe { Pin::new_unchecked(&mut this.future) };
+                match pin.poll(&mut poll_ctx) {
                     Poll::Pending => {
                         // Now we're expecting at least _one_ event from the portal, since otherwise
                         // we could be running into an infinite loop here.
-                        let Some(event) = self.portal.poll() else {
+                        let Some(event) = this.portal.poll() else {
                             panic!("Future did not complete, but portal does not have any new events.");
                         };
                         CoroPoll::Event(event)
@@ -205,20 +211,20 @@ where
                     Poll::Ready(result) => {
                         // It could be that the portal still has some events. We need to process
                         // those before we signal the completion.
-                        if let Some(event) = self.portal.poll() {
+                        if let Some(event) = this.portal.poll() {
                             // Store the result in the Coro, it will be retrieve in a subsequent
                             // call to this function.
-                            self.state = CoroState::Ready(result);
+                            this.state = CoroState::Ready(result);
                             return CoroPoll::Event(event);
                         }
 
-                        self.state = CoroState::Finished;
+                        this.state = CoroState::Finished;
                         CoroPoll::Result(result)
                     }
                 }
             }
             CoroState::Ready(_) => {
-                let CoroState::Ready(result) = std::mem::replace(&mut self.state, CoroState::Finished) else {
+                let CoroState::Ready(result) = std::mem::replace(&mut this.state, CoroState::Finished) else {
                     unreachable!()
                 };
                 CoroPoll::Result(result)

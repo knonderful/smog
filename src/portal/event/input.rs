@@ -1,23 +1,9 @@
 use crate::cell::OptimizedRefCell;
-use crate::portal::{Portal, PortalFront};
+use crate::portal::{PortalBack, PortalFront};
 use std::future::Future;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
-
-/// A [`Portal`] implementation that supports input events (into the coroutine).
-pub struct InPortal<I>(PhantomData<I>);
-
-impl<I> Portal for InPortal<I> {
-    type Front = InFront<I>;
-    type Back = InBack<I>;
-
-    fn new() -> (Self::Front, Self::Back) {
-        let state = Rc::new(OptimizedRefCell::new(InState::Neutral));
-        (Self::Front::new(state.clone()), Self::Back::new(state))
-    }
-}
 
 enum InState<I> {
     /// Neutral state.
@@ -101,6 +87,15 @@ impl<I> InBack<I> {
     }
 }
 
+impl<I> PortalBack for InBack<I> {
+    type Front = InFront<I>;
+
+    fn new_portal() -> (Self::Front, Self) {
+        let state = Rc::new(OptimizedRefCell::new(InState::Neutral));
+        (Self::Front::new(state.clone()), Self::new(state))
+    }
+}
+
 struct ReceiveFuture<'a, I> {
     state: &'a OptimizedRefCell<InState<I>>,
 }
@@ -143,7 +138,7 @@ impl<I> Future for ReceiveFuture<'_, I> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{catch_unwind_silent, Coro, CoroPoll};
+    use crate::{catch_unwind_silent, coro_from_fn, CoroPoll};
     use std::pin::pin;
     use std::sync::Mutex;
 
@@ -159,27 +154,23 @@ mod test {
 
     #[test]
     fn test_valid() {
-        let (front, back) = InPortal::new();
-        let future = pin!(create_machine(back));
-        let mut coro = Coro::new(front, future);
+        let mut coro = pin!(coro_from_fn(create_machine));
 
         assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
-        coro.portal_mut().provide(150);
+        coro.portal().provide(150);
         assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
-        coro.portal_mut().provide(52);
+        coro.portal().provide(52);
         assert_eq!(CoroPoll::Result(404), coro.poll());
     }
 
     #[test]
     fn test_poll_after_completion() {
-        let (front, back) = InPortal::new();
-        let future = pin!(create_machine(back));
-        let mut coro = Coro::new(front, future);
+        let mut coro = pin!(coro_from_fn(create_machine));
 
         assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
-        coro.portal_mut().provide(150);
+        coro.portal().provide(150);
         assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
-        coro.portal_mut().provide(52);
+        coro.portal().provide(52);
         assert_eq!(CoroPoll::Result(404), coro.poll());
 
         let mut coro = Mutex::new(coro);
@@ -190,20 +181,17 @@ mod test {
 
     #[test]
     fn test_provide_without_await() {
-        let (front, back) = InPortal::new();
-        let future = pin!(create_machine(back));
-        let mut coro = Mutex::new(Coro::new(front, future));
+        let coro = pin!(coro_from_fn(create_machine));
+        let mut coro = Mutex::new(coro);
 
         // Trying to provide input without awaiting first (since the coro hasn't been polled yet)
-        let result = catch_unwind_silent(move || coro.get_mut().unwrap().portal_mut().provide(150));
+        let result = catch_unwind_silent(move || coro.get_mut().unwrap().portal().provide(150));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_poll_after_await() {
-        let (front, back) = InPortal::new();
-        let future = pin!(create_machine(back));
-        let mut coro = Coro::new(front, future);
+        let mut coro = pin!(coro_from_fn(create_machine));
 
         assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
 

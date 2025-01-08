@@ -1,23 +1,9 @@
 use crate::cell::OptimizedRefCell;
-use crate::portal::{Portal, PortalFront};
+use crate::portal::{PortalBack, PortalFront};
 use std::future::Future;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::task::{Context, Poll};
-
-/// A [`Portal`] implementation that supports output events (from the coroutine).
-pub struct OutPortal<O>(PhantomData<O>);
-
-impl<O> Portal for OutPortal<O> {
-    type Front = OutFront<O>;
-    type Back = OutBack<O>;
-
-    fn new() -> (Self::Front, Self::Back) {
-        let state = Rc::new(OptimizedRefCell::new(OutState::Neutral));
-        (Self::Front::new(state.clone()), Self::Back::new(state))
-    }
-}
 
 enum OutState<O> {
     /// Neutral state.
@@ -88,6 +74,15 @@ impl<O> OutBack<O> {
     }
 }
 
+impl<O> PortalBack for OutBack<O> {
+    type Front = OutFront<O>;
+
+    fn new_portal() -> (Self::Front, Self) {
+        let state = Rc::new(OptimizedRefCell::new(OutState::Neutral));
+        (Self::Front::new(state.clone()), Self::new(state))
+    }
+}
+
 struct SendFuture<'a, O> {
     state: &'a OptimizedRefCell<OutState<O>>,
 }
@@ -121,7 +116,7 @@ impl<O> Future for SendFuture<'_, O> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{catch_unwind_silent, Coro, CoroPoll};
+    use crate::{catch_unwind_silent, coro_from_fn, CoroPoll};
     use std::pin::pin;
     use std::sync::Mutex;
 
@@ -138,9 +133,7 @@ mod test {
 
     #[test]
     fn test_valid() {
-        let (front, back) = OutPortal::new();
-        let future = pin!(create_machine(back, &[150, 52, 666]));
-        let mut coro = Coro::new(front, future);
+        let mut coro = pin!(coro_from_fn(|back| create_machine(back, &[150, 52, 666])));
 
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), coro.poll());
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), coro.poll());
@@ -149,9 +142,7 @@ mod test {
 
     #[test]
     fn test_poll_after_completion() {
-        let (front, back) = OutPortal::new();
-        let future = pin!(create_machine(back, &[150, 52, 666]));
-        let mut coro = Coro::new(front, future);
+        let mut coro = pin!(coro_from_fn(|back| create_machine(back, &[150, 52, 666])));
 
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), coro.poll());
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), coro.poll());
