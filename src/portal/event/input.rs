@@ -72,10 +72,7 @@ impl<I> PortalFront for InFront<I> {
     fn poll(&mut self) -> Option<Self::Event> {
         match *self.state.borrow() {
             InState::AwaitingSignalled => {} // fall-through
-            InState::Neutral
-            | InState::AwaitingConfirmed
-            | InState::FrontProvided(_)
-            | InState::Closed => return None,
+            InState::Neutral | InState::AwaitingConfirmed | InState::FrontProvided(_) | InState::Closed => return None,
         }
 
         *self.state.borrow_mut() = InState::AwaitingConfirmed;
@@ -131,9 +128,7 @@ impl<I> Future for ReceiveFuture<'_, I> {
 
     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         match *self.state.borrow() {
-            InState::AwaitingSignalled | InState::AwaitingConfirmed | InState::Neutral => {
-                return Poll::Pending
-            }
+            InState::AwaitingSignalled | InState::AwaitingConfirmed | InState::Neutral => return Poll::Pending,
             InState::FrontProvided(_) => {} // fall-through
             InState::Closed => panic!("Polling while state is Closed"),
         }
