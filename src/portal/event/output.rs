@@ -1,5 +1,5 @@
+use crate::cell::OptimizedRefCell;
 use crate::portal::{Portal, PortalFront};
-use std::cell::RefCell;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -14,7 +14,7 @@ impl<O> Portal for OutPortal<O> {
     type Back = OutBack<O>;
 
     fn new() -> (Self::Front, Self::Back) {
-        let state = Rc::new(RefCell::new(OutState::Neutral));
+        let state = Rc::new(OptimizedRefCell::new(OutState::Neutral));
         (Self::Front::new(state.clone()), Self::Back::new(state))
     }
 }
@@ -35,7 +35,7 @@ pub enum OutEvent<O> {
 }
 
 pub struct OutFront<O> {
-    state: Rc<RefCell<OutState<O>>>,
+    state: Rc<OptimizedRefCell<OutState<O>>>,
 }
 
 impl<O> Drop for OutFront<O> {
@@ -45,7 +45,7 @@ impl<O> Drop for OutFront<O> {
 }
 
 impl<O> OutFront<O> {
-    fn new(state: Rc<RefCell<OutState<O>>>) -> Self {
+    fn new(state: Rc<OptimizedRefCell<OutState<O>>>) -> Self {
         Self { state }
     }
 }
@@ -68,7 +68,7 @@ impl<O> PortalFront for OutFront<O> {
 }
 
 pub struct OutBack<O> {
-    state: Rc<RefCell<OutState<O>>>,
+    state: Rc<OptimizedRefCell<OutState<O>>>,
 }
 
 impl<O> Drop for OutBack<O> {
@@ -78,7 +78,7 @@ impl<O> Drop for OutBack<O> {
 }
 
 impl<O> OutBack<O> {
-    fn new(state: Rc<RefCell<OutState<O>>>) -> Self {
+    fn new(state: Rc<OptimizedRefCell<OutState<O>>>) -> Self {
         Self { state }
     }
 
@@ -89,11 +89,11 @@ impl<O> OutBack<O> {
 }
 
 struct SendFuture<'a, O> {
-    state: &'a RefCell<OutState<O>>,
+    state: &'a OptimizedRefCell<OutState<O>>,
 }
 
 impl<'a, O> SendFuture<'a, O> {
-    fn new(state: &'a RefCell<OutState<O>>, event: O) -> Self {
+    fn new(state: &'a OptimizedRefCell<OutState<O>>, event: O) -> Self {
         match *state.borrow() {
             OutState::Neutral => {} // OK: fall-through
             OutState::Yielded(_) => panic!("Started send while state is Yielded."),

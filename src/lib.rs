@@ -137,6 +137,7 @@
 //! that occur. The type of events that can occur depend on the [`Portal`](portal::Portal)
 //! implementation.
 
+mod cell;
 pub mod portal;
 
 use crate::portal::PortalFront;
