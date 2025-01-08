@@ -127,11 +127,11 @@
 //! [`Future`] can be polled by hand, thus "driving" the state machine forward.
 //!
 //! In order to support input and output events (data, messages, ...) between the [`Future`]
-//! implementation and the outside world a [`Portal`](portal::Portal) is established. This portal consists of two
-//! sides: a front (used by the by the outside world, or "caller") and a back (used by the
-//! [`Future`] implementation, or "callee"). Different [`Portal`](portal::Portal) implementations
-//! provide different abilities. They dictate how the caller and callee can communicate (e.g. via
-//! input and output events).
+//! implementation and the outside world a [`Portal`](portal::Portal) is established. This portal
+//! consists of two sides: a front (used by the by the outside world, or "caller") and a back (used
+//! by the [`Future`] implementation, or "callee"). Different [`Portal`](portal::Portal)
+//! implementations provide different abilities. They dictate how the caller and callee can
+//!  communicate (e.g. via input and output events).
 //!
 //! [`Coro`] provides an ergonomic interface for driving the coroutine state and handling events
 //! that occur. The type of events that can occur depend on the [`Portal`](portal::Portal)
