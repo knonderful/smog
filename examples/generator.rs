@@ -1,3 +1,5 @@
+//! This example shows how to stream data out of a coroutine. Such a coroutine is commonly called a generator.
+
 use smog::portal::output::{OutBack, OutEvent};
 use smog::{create_driver, CoroPoll};
 use std::pin::pin;
@@ -29,6 +31,7 @@ fn main() {
     // The driver is what allows us to both advance the state machine and receive events from the coroutine.
     let mut driver = pin!(create_driver(fibonacci));
 
+    // The other variant (CoroPoll::Result) would mean that the coroutine has finished, which would end this loop.
     while let CoroPoll::Event(portal_event) = driver.poll() {
         match portal_event {
             OutEvent::Yielded(val) => print!(" {val}"),
