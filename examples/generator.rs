@@ -5,8 +5,8 @@ use std::pin::pin;
 async fn fibonacci(mut portal: OutBack<u8>) {
     // Fibonacci is a good example of the power of coroutines, since this "anomaly" at the start would require a lot
     // more complex code with "normal" code.
-    for _ in 0..2 {
-        portal.send(0).await;
+    for i in 0..2 {
+        portal.send(i).await;
     }
 
     let mut a: u8 = 0;
