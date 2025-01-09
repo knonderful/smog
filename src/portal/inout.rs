@@ -2,8 +2,8 @@
 
 use std::future::Future;
 
-pub use super::input::*;
-pub use super::output::*;
+use super::input::*;
+use super::output::*;
 use crate::portal::{PortalBack, PortalFront};
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
