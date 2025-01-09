@@ -167,7 +167,7 @@ where
         Self {
             portal,
             future,
-            waker: unsafe { Waker::from_raw(NOOP_WAKER) },
+            waker: unsafe { Waker::from_raw(CANARY_WAKER) },
             state: CoroState::InProgress,
         }
     }
@@ -253,10 +253,10 @@ pub enum CoroPoll<E, R> {
     Result(R),
 }
 
-const NOOP_WAKER: RawWaker = {
+const CANARY_WAKER: RawWaker = {
     const VTABLE: RawWakerVTable = RawWakerVTable::new(
-        // Cloning just returns a new no-op raw waker
-        |_| NOOP_WAKER,
+        // We currently don't support futures to actually use the waker mechanism inside coroutines.
+        |_| panic!("Future attempted to clone a waker. This is not supported (yet)."),
         // `wake` does nothing
         |_| {},
         // `wake_by_ref` does nothing
@@ -274,4 +274,88 @@ fn catch_unwind_silent<F: FnOnce() -> R + std::panic::UnwindSafe, R>(f: F) -> st
     let result = std::panic::catch_unwind(f);
     std::panic::set_hook(prev_hook);
     result
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::portal::input::InBack;
+    use std::any::Any;
+    use std::pin::pin;
+    use std::sync::Mutex;
+    use std::thread::sleep;
+
+    fn expect_panic<T>(result: Result<T, Box<dyn Any + Send>>, expected_msg: &str) {
+        let Err(error) = result else {
+            panic!("Expected a panic.");
+        };
+        let Some(msg) = error.as_ref().downcast_ref::<&str>() else {
+            panic!("Expected a &str from panic.");
+        };
+        assert_eq!(*msg, expected_msg);
+    }
+
+    #[test]
+    fn test_infinite_loop_future() {
+        struct InfiniteLoopFuture;
+
+        impl Future for InfiniteLoopFuture {
+            type Output = ();
+
+            fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+                Poll::Pending
+            }
+        }
+
+        let coro = |_: InBack<u32>| async {
+            InfiniteLoopFuture.await;
+        };
+
+        let driver = pin!(create_driver(coro));
+        let mut driver = Mutex::new(driver);
+
+        let result = catch_unwind_silent(move || driver.get_mut().unwrap().poll());
+        expect_panic(
+            result,
+            "Future did not complete, but portal does not have any new events.",
+        );
+    }
+
+    /// Tests that "foreign futures" (ones that work in an _actual_ async run-time) cause a panic, rather than leading
+    /// to an infinite loop. The plan is to support waking in the future via some kind of blocking mutex mechanism in
+    /// Driver::poll().
+    #[test]
+    fn test_foreign_future() {
+        #[derive(Default)]
+        struct ForeignFuture;
+
+        impl Future for ForeignFuture {
+            type Output = ();
+
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                // This is technically a correct future, but we don't support waking yet...
+                let waker = cx.waker().clone();
+                // ... so the test will panic on the clone and never reach this place.
+                std::thread::spawn(|| {
+                    sleep(std::time::Duration::from_secs(1));
+                    waker.wake();
+                });
+                Poll::Pending
+            }
+        }
+
+        let coro = |_: InBack<u32>| async {
+            // This will grab a waker
+            ForeignFuture.await;
+        };
+
+        let driver = pin!(create_driver(coro));
+        let mut driver = Mutex::new(driver);
+
+        let result = catch_unwind_silent(move || driver.get_mut().unwrap().poll());
+        expect_panic(
+            result,
+            "Future attempted to clone a waker. This is not supported (yet).",
+        );
+    }
 }
