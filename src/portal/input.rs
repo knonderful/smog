@@ -1,3 +1,5 @@
+//! A portal implementation that supports input events.
+
 use crate::cell::OptimizedRefCell;
 use crate::portal::{PortalBack, PortalFront};
 use std::future::Future;
@@ -24,6 +26,7 @@ pub enum InEvent {
     Awaiting,
 }
 
+/// The [`PortalFront`] implementation.
 pub struct InFront<I> {
     state: Rc<OptimizedRefCell<InState<I>>>,
 }
@@ -66,6 +69,7 @@ impl<I> PortalFront for InFront<I> {
     }
 }
 
+/// The [`PortalBack`] implementation.
 pub struct InBack<I> {
     state: Rc<OptimizedRefCell<InState<I>>>,
 }
@@ -138,7 +142,7 @@ impl<I> Future for ReceiveFuture<'_, I> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{catch_unwind_silent, coro_from_fn, CoroPoll};
+    use crate::{catch_unwind_silent, create_driver, CoroPoll};
     use std::pin::pin;
     use std::sync::Mutex;
 
@@ -154,51 +158,51 @@ mod test {
 
     #[test]
     fn test_valid() {
-        let mut coro = pin!(coro_from_fn(create_machine));
+        let mut driver = pin!(create_driver(create_machine));
 
-        assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
-        coro.portal().provide(150);
-        assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
-        coro.portal().provide(52);
-        assert_eq!(CoroPoll::Result(404), coro.poll());
+        assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
+        driver.portal().provide(150);
+        assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
+        driver.portal().provide(52);
+        assert_eq!(CoroPoll::Result(404), driver.poll());
     }
 
     #[test]
     fn test_poll_after_completion() {
-        let mut coro = pin!(coro_from_fn(create_machine));
+        let mut driver = pin!(create_driver(create_machine));
 
-        assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
-        coro.portal().provide(150);
-        assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
-        coro.portal().provide(52);
-        assert_eq!(CoroPoll::Result(404), coro.poll());
+        assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
+        driver.portal().provide(150);
+        assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
+        driver.portal().provide(52);
+        assert_eq!(CoroPoll::Result(404), driver.poll());
 
-        let mut coro = Mutex::new(coro);
+        let mut driver = Mutex::new(driver);
         // Trying to poll after completion should panic.
-        let result = catch_unwind_silent(move || coro.get_mut().unwrap().poll());
+        let result = catch_unwind_silent(move || driver.get_mut().unwrap().poll());
         assert!(result.is_err());
     }
 
     #[test]
     fn test_provide_without_await() {
-        let coro = pin!(coro_from_fn(create_machine));
-        let mut coro = Mutex::new(coro);
+        let driver = pin!(create_driver(create_machine));
+        let mut driver = Mutex::new(driver);
 
-        // Trying to provide input without awaiting first (since the coro hasn't been polled yet)
-        let result = catch_unwind_silent(move || coro.get_mut().unwrap().portal().provide(150));
+        // Trying to provide input without awaiting first (since the driver hasn't been polled yet)
+        let result = catch_unwind_silent(move || driver.get_mut().unwrap().portal().provide(150));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_poll_after_await() {
-        let mut coro = pin!(coro_from_fn(create_machine));
+        let mut driver = pin!(create_driver(create_machine));
 
-        assert_eq!(CoroPoll::Event(InEvent::Awaiting), coro.poll());
+        assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
 
-        let mut coro = Mutex::new(coro);
+        let mut driver = Mutex::new(driver);
         // Trying to poll again without providing input will cause the portal to not emit an event,
-        // which should cause `Coro` to panic.
-        let result = catch_unwind_silent(move || coro.get_mut().unwrap().poll());
+        // which should cause `Driver` to panic.
+        let result = catch_unwind_silent(move || driver.get_mut().unwrap().poll());
         assert!(result.is_err());
     }
 }

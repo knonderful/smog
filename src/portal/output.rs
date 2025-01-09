@@ -1,3 +1,5 @@
+//! A portal implementation that supports output events.
+
 use crate::cell::OptimizedRefCell;
 use crate::portal::{PortalBack, PortalFront};
 use std::future::Future;
@@ -20,6 +22,7 @@ pub enum OutEvent<O> {
     Yielded(O),
 }
 
+/// The [`PortalFront`] implementation.
 pub struct OutFront<O> {
     state: Rc<OptimizedRefCell<OutState<O>>>,
 }
@@ -53,6 +56,7 @@ impl<O> PortalFront for OutFront<O> {
     }
 }
 
+/// The [`PortalBack`] implementation.
 pub struct OutBack<O> {
     state: Rc<OptimizedRefCell<OutState<O>>>,
 }
@@ -116,7 +120,7 @@ impl<O> Future for SendFuture<'_, O> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{catch_unwind_silent, coro_from_fn, CoroPoll};
+    use crate::{catch_unwind_silent, create_driver, CoroPoll};
     use std::pin::pin;
     use std::sync::Mutex;
 
@@ -133,24 +137,24 @@ mod test {
 
     #[test]
     fn test_valid() {
-        let mut coro = pin!(coro_from_fn(|back| create_machine(back, &[150, 52, 666])));
+        let mut driver = pin!(create_driver(|back| create_machine(back, &[150, 52, 666])));
 
-        assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), coro.poll());
-        assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), coro.poll());
-        assert_eq!(CoroPoll::Result(404), coro.poll());
+        assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), driver.poll());
+        assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), driver.poll());
+        assert_eq!(CoroPoll::Result(404), driver.poll());
     }
 
     #[test]
     fn test_poll_after_completion() {
-        let mut coro = pin!(coro_from_fn(|back| create_machine(back, &[150, 52, 666])));
+        let mut driver = pin!(create_driver(|back| create_machine(back, &[150, 52, 666])));
 
-        assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), coro.poll());
-        assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), coro.poll());
-        assert_eq!(CoroPoll::Result(404), coro.poll());
+        assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), driver.poll());
+        assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), driver.poll());
+        assert_eq!(CoroPoll::Result(404), driver.poll());
 
-        let mut coro = Mutex::new(coro);
+        let mut driver = Mutex::new(driver);
         // Trying to poll after completion should panic.
-        let result = catch_unwind_silent(move || coro.get_mut().unwrap().poll());
+        let result = catch_unwind_silent(move || driver.get_mut().unwrap().poll());
         assert!(result.is_err());
     }
 }

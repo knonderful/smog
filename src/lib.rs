@@ -5,8 +5,8 @@
 //! # Example
 //!
 //! ```
-//! use smog::{Coro, CoroPoll};
-//! use smog::portal::event::{InOutBack, InOutEvent};
+//! use smog::{Driver, CoroPoll};
+//! use smog::portal::inout::{InOutBack, InOutEvent};
 //! use std::pin::pin;
 //!
 //! /// Fictional output of a tokenizer.
@@ -75,10 +75,10 @@
 //!     .into_iter();
 //!
 //!     // Create the coroutine with the future that represents the work
-//!     let coro = smog::coro_from_fn(|back| parse_and_find(back, "Jo"));
-//!     // We need to pin the coro for technical reasons. Can be either on the heap with Box::pin() or on the stack,
+//!     let driver = smog::create_driver(|back| parse_and_find(back, "Jo"));
+//!     // We need to pin the driver for technical reasons. Can be either on the heap with Box::pin() or on the stack,
 //!     // like so:
-//!     let mut parser = pin!(coro);
+//!     let mut parser = pin!(driver);
 //!
 //!     let mut yielded = Vec::new();
 //!     let match_count;
@@ -123,13 +123,10 @@
 //! "driving" the state machine forward.
 //!
 //! In order to support input and output events (data, messages, ...) between the [`Future`] implementation and the
-//! outside world a "portal" is established. This portal consists of two sides: a [front](PortalFront) (used by the by
-//! the outside world, or "caller") and a [back](PortalBack) (used by the [`Future`] implementation, or "callee").
-//! Different portal implementations provide different abilities. They dictate how the caller and callee can communicate
-//! (e.g. via input and output events).
+//! outside world a [portal] is established. The portal implementation dictates how the calling code and coroutine can
+//! communicate (e.g. via input- and output events).
 //!
-//! [`Coro`] provides an ergonomic interface for driving the coroutine state and handling events that occur. The type of
-//! events that can occur depend on the portal implementation.
+//! [`Driver`] provides an ergonomic interface for driving the coroutine state and handling events that occur.
 
 mod cell;
 pub mod portal;
@@ -140,16 +137,16 @@ use std::pin::Pin;
 use std::ptr;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-/// Create a new [`Coro`] from a function that implements a coroutine. See [crate documentation](crate) for more
+/// Create a new [`Driver`] from a function that implements a coroutine. See [crate documentation](crate) for more
 /// information.
-pub fn coro_from_fn<B: PortalBack, F: Future>(future_fn: impl FnOnce(B) -> F) -> Coro<B::Front, F> {
+pub fn create_driver<B: PortalBack, F: Future>(future_fn: impl FnOnce(B) -> F) -> Driver<B::Front, F> {
     let (front, back) = B::new_portal();
     let future = future_fn(back);
-    Coro::new(front, future)
+    Driver::new(front, future)
 }
 
 /// A coroutine. See the [crate documentation](crate) for more information.
-pub struct Coro<P, F>
+pub struct Driver<P, F>
 where
     F: Future,
 {
@@ -159,13 +156,13 @@ where
     state: CoroState<F::Output>,
 }
 
-impl<P, F> Coro<P, F>
+impl<P, F> Driver<P, F>
 where
     F: Future,
 {
     /// Creates a new instance from a [`PortalFront`] and a [`Future`].
     ///
-    /// In most cases the [`coro_from_fn`] function should be used to create a new [`Coro`], instead.
+    /// In most cases the [`create_driver`] function should be used to create a new [`Driver`], instead.
     pub fn new(portal: P, future: F) -> Self {
         Self {
             portal,
@@ -183,12 +180,12 @@ where
     }
 }
 
-impl<P, F> Coro<P, F>
+impl<P, F> Driver<P, F>
 where
     P: PortalFront,
     F: Future,
 {
-    /// Polls the [`Coro`] for events. Internally, calling this function advances the underlying future and iteracts
+    /// Polls the [`Driver`] for events. Internally, calling this function advances the underlying future and iteracts
     /// with the portal.
     #[must_use]
     pub fn poll(self: &mut Pin<&mut Self>) -> CoroPoll<P::Event, F::Output> {
@@ -218,7 +215,7 @@ where
                         // It could be that the portal still has some events. We need to process
                         // those before we signal the completion.
                         if let Some(event) = this.portal.poll() {
-                            // Store the result in the Coro, it will be retrieve in a subsequent
+                            // Store the result in the Driver, it will be retrieve in a subsequent
                             // call to this function.
                             this.state = CoroState::Ready(result);
                             return CoroPoll::Event(event);
@@ -240,14 +237,14 @@ where
     }
 }
 
-/// Internal state of a [`Coro`].
+/// Internal state of a [`Driver`].
 enum CoroState<R> {
     InProgress,
     Ready(R),
     Finished,
 }
 
-/// Result type of [`Coro::poll()`].
+/// Result type of [`Driver::poll()`].
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum CoroPoll<E, R> {
     /// A portal event.
