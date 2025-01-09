@@ -1,6 +1,6 @@
-//! A crate for working with asymmetric coroutines in pure Rust. This enables writing ergonomic
-//! state machines (including generators) that allow for events to be passed into and out of the
-//! coroutine, as well as evaluation of completion results.
+//! A crate for working with asymmetric coroutines in pure Rust. This enables writing ergonomic state machines
+//! (including generators) that allow for events to be passed into and out of the coroutine, as well as evaluation of
+//! completion results.
 //!
 //! # Example
 //!
@@ -111,28 +111,25 @@
 //! }
 //! ```
 //!
-//! Here, `parse_and_find()` implements the state machine for parsing a "section" of a fictional
-//! tokenized input. The code can be read from top to bottom and the reader can easily reason about
-//! the workings of this parser.
+//! Here, `parse_and_find()` implements the state machine for parsing a "section" of a fictional tokenized input. The
+//! code can be read from top to bottom and the reader can easily reason about the workings of this parser.
 //!
 //! See the Design section for an elaboration of the mechanisms involved.
 //!
 //! # Design
 //!
-//! This crate leverages the ability of the Rust compiler to generate a state machine from an
-//! `async` function. This state machine is basically an inline [`Future`] implementation. Such a
-//! [`Future`] can be polled by hand, thus "driving" the state machine forward.
+//! This crate leverages the ability of the Rust compiler to generate a state machine from an `async` function. This
+//! state machine is basically an inline [`Future`] implementation. Such a [`Future`] can be polled by hand, thus
+//! "driving" the state machine forward.
 //!
-//! In order to support input and output events (data, messages, ...) between the [`Future`]
-//! implementation and the outside world a [`Portal`](portal::Portal) is established. This portal
-//! consists of two sides: a front (used by the by the outside world, or "caller") and a back (used
-//! by the [`Future`] implementation, or "callee"). Different [`Portal`](portal::Portal)
-//! implementations provide different abilities. They dictate how the caller and callee can
-//!  communicate (e.g. via input and output events).
+//! In order to support input and output events (data, messages, ...) between the [`Future`] implementation and the
+//! outside world a "portal" is established. This portal consists of two sides: a [front](PortalFront) (used by the by
+//! the outside world, or "caller") and a [back](PortalBack) (used by the [`Future`] implementation, or "callee").
+//! Different portal implementations provide different abilities. They dictate how the caller and callee can communicate
+//! (e.g. via input and output events).
 //!
-//! [`Coro`] provides an ergonomic interface for driving the coroutine state and handling events
-//! that occur. The type of events that can occur depend on the [`Portal`](portal::Portal)
-//! implementation.
+//! [`Coro`] provides an ergonomic interface for driving the coroutine state and handling events that occur. The type of
+//! events that can occur depend on the portal implementation.
 
 mod cell;
 pub mod portal;
@@ -143,6 +140,15 @@ use std::pin::Pin;
 use std::ptr;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
+/// Create a new [`Coro`] from a function that implements a coroutine. See [crate documentation](crate) for more
+/// information.
+pub fn coro_from_fn<B: PortalBack, F: Future>(future_fn: impl FnOnce(B) -> F) -> Coro<B::Front, F> {
+    let (front, back) = B::new_portal();
+    let future = future_fn(back);
+    Coro::new(front, future)
+}
+
+/// A coroutine. See the [crate documentation](crate) for more information.
 pub struct Coro<P, F>
 where
     F: Future,
@@ -157,6 +163,9 @@ impl<P, F> Coro<P, F>
 where
     F: Future,
 {
+    /// Creates a new instance from a [`PortalFront`] and a [`Future`].
+    ///
+    /// In most cases the [`coro_from_fn`] function should be used to create a new [`Coro`], instead.
     pub fn new(portal: P, future: F) -> Self {
         Self {
             portal,
@@ -166,6 +175,7 @@ where
         }
     }
 
+    /// Retrieves a reference to the [`PortalFront`].
     pub fn portal<'a, 'b>(self: &'a mut Pin<&'b mut Self>) -> &'a mut P {
         // SAFETY: We're not moving `self` in our code.
         let this = unsafe { Pin::get_unchecked_mut(self.as_mut()) };
@@ -173,17 +183,13 @@ where
     }
 }
 
-pub fn coro_from_fn<B: PortalBack, F: Future>(future_fn: impl FnOnce(B) -> F) -> Coro<B::Front, F> {
-    let (front, back) = B::new_portal();
-    let future = future_fn(back);
-    Coro::new(front, future)
-}
-
 impl<P, F> Coro<P, F>
 where
     P: PortalFront,
     F: Future,
 {
+    /// Polls the [`Coro`] for events. Internally, calling this function advances the underlying future and iteracts
+    /// with the portal.
     #[must_use]
     pub fn poll(self: &mut Pin<&mut Self>) -> CoroPoll<P::Event, F::Output> {
         // SAFETY: We're not moving `self` in our code.
@@ -244,7 +250,9 @@ enum CoroState<R> {
 /// Result type of [`Coro::poll()`].
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum CoroPoll<E, R> {
+    /// A portal event.
     Event(E),
+    /// The result from the [`Future`].
     Result(R),
 }
 
