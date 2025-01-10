@@ -173,10 +173,11 @@ where
     }
 
     /// Retrieves a reference to the [`PortalFront`].
-    pub fn portal<'a, 'b>(self: &'a mut Pin<&'b mut Self>) -> &'a mut P {
+    pub fn portal<'a, 'b>(self: &'a mut Pin<&'b mut Self>) -> Pin<&'a mut P> {
         // SAFETY: We're not moving `self` in our code.
         let this = unsafe { Pin::get_unchecked_mut(self.as_mut()) };
-        &mut this.portal
+        // SAFETY: this.portal is pinned because self is pinned
+        unsafe { Pin::new_unchecked(&mut this.portal) }
     }
 }
 
