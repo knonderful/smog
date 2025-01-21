@@ -5,13 +5,13 @@
 //! # Example
 //!
 //! ```
-//! use smog::{Driver, CoroPoll};
 //! use smog::portal::inout::{InOutBack, InOutEvent};
-//! use std::pin::pin;
+//! use smog::CoroPoll;
 //!
 //! /// Fictional output of a tokenizer.
+//! #[derive(Debug)]
 //! enum Token {
-//!     SectionStart(String),
+//!     SectionStart,
 //!     SectionEnd,
 //!     Key(String),
 //!     Value(String),
@@ -19,48 +19,40 @@
 //!
 //! /// Simple state machine that parses a "section" and yields all values for which the key starts
 //! /// with `prefix`.
-//! async fn parse_and_find(
-//!     mut portal: InOutBack<Token, String>,
-//!     prefix: &str,
-//! ) -> Result<usize, String> {
-//!     let Token::SectionStart(section_name) = portal.receive().await else {
-//!         return Err("Expected section-start.".to_string());
+//! async fn parse_and_find(mut portal: InOutBack<Token, String>, prefix: &str) -> Result<&'static str, String> {
+//!     // Receive input from the outside world through the portal
+//!     match portal.receive().await {
+//!         Token::SectionStart => {}
+//!         other => return Err(format!("Expected SectionStart, but got {other:?}.")),
 //!     };
 //!
 //!     let mut match_count = 0;
-//!     let mut current_key = None;
 //!     loop {
-//!         match portal.receive().await {
-//!             Token::SectionStart(new_name) => {
-//!                 return Err(format!("Multiple sections: {section_name} and {new_name}."))
-//!             }
+//!         let key = match portal.receive().await {
 //!             Token::SectionEnd => break,
-//!             Token::Key(key) => {
-//!                 let last_key = current_key.replace(key);
-//!                 if last_key.is_some() {
-//!                     return Err("Multiple keys.".to_string());
-//!                 }
-//!             }
-//!             Token::Value(value) => {
-//!                 let Some(key) = current_key.take() else {
-//!                     return Err("Got value without key.".to_string());
-//!                 };
+//!             Token::Key(val) => val,
+//!             other => return Err(format!("Expected Key, but got {other:?}.")),
+//!         };
 //!
-//!                 if key.starts_with(prefix) {
-//!                     match_count += 1;
-//!                     portal.send(value).await;
-//!                 }
-//!             }
+//!         let value = match portal.receive().await {
+//!             Token::Value(val) => val,
+//!             other => return Err(format!("Expected Value, but got {other:?}.")),
+//!         };
+//!
+//!         if key.starts_with(prefix) {
+//!             match_count += 1;
+//!             // Send output through the portal
+//!             portal.send(value).await;
 //!         }
 //!     }
 //!
-//!     Ok(match_count)
+//!     const DAYS: &[&str] = &["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+//!     Ok(DAYS[match_count % DAYS.len()])
 //! }
 //!
 //! fn main() {
-//!
-//! let mut input = vec![
-//! #        Token::SectionStart("users".to_string()),
+//!     let mut input = vec![
+//! #        Token::SectionStart,
 //! #        Token::Key("Bob".to_string()),
 //! #        Token::Value("Bumble".to_string()),
 //! #        Token::Key("John".to_string()),
@@ -75,13 +67,10 @@
 //!     .into_iter();
 //!
 //!     // Create the coroutine with the future that represents the work
-//!     let driver = smog::driver(|back| parse_and_find(back, "Jo"));
-//!     // We need to pin the driver for technical reasons. Can be either on the heap with Box::pin() or on the stack,
-//!     // like so:
-//!     let mut parser = pin!(driver);
+//!     let mut parser = smog::driver(|back| parse_and_find(back, "Jo"));
 //!
 //!     let mut yielded = Vec::new();
-//!     let match_count;
+//!     let day;
 //!     loop {
 //!         // Polling "drives" the coroutine and retrieves events from the portal
 //!         match parser.poll() {
@@ -94,20 +83,20 @@
 //!                     // The coroutine yielded output.
 //!                     yielded.push(val);
 //!                 }
-//!             }
+//!             },
 //!             CoroPoll::Result(result) => match result {
 //!                 // The coroutine has finished; handle the result.
-//!                 Ok(count) => {
-//!                     match_count = count;
+//!                 Ok(val) => {
+//!                     day = val;
 //!                     break;
 //!                 }
 //!                 Err(err) => panic!("Parsing failed: {err}"),
-//!             }
+//!             },
 //!         }
 //!     }
 //!
 //!     assert_eq!(&yielded, &["Doe", "Hallenbeck"]);
-//!     assert_eq!(2, match_count);
+//!     assert_eq!("Wednesday", day);
 //! }
 //! ```
 //!
