@@ -1,4 +1,4 @@
-//! A portal implementation that supports output events.
+//! A portal implementation that supports output events. See [`OutBack`] and [`OutFront`].
 
 use crate::portal::{PortalBack, PortalFront};
 use std::future::Future;

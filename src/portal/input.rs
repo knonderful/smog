@@ -1,4 +1,4 @@
-//! A portal implementation that supports input events.
+//! A portal implementation that supports input events. See [`InBack`] and [`InFront`].
 
 use crate::portal::{PortalBack, PortalFront};
 use std::future::Future;
