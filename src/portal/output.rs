@@ -1,10 +1,8 @@
 //! A portal implementation that supports output events.
 
-use crate::cell::OptimizedRefCell;
 use crate::portal::{PortalBack, PortalFront};
 use std::future::Future;
 use std::pin::Pin;
-use std::rc::Rc;
 use std::task::{Context, Poll};
 
 enum OutState<O> {
@@ -24,31 +22,28 @@ pub enum OutEvent<O> {
 
 /// The [`PortalFront`] implementation.
 pub struct OutFront<O> {
-    state: Rc<OptimizedRefCell<OutState<O>>>,
+    state: OutState<O>,
 }
 
 impl<O> Drop for OutFront<O> {
     fn drop(&mut self) {
-        *self.state.borrow_mut() = OutState::Closed;
-    }
-}
-
-impl<O> OutFront<O> {
-    fn new(state: Rc<OptimizedRefCell<OutState<O>>>) -> Self {
-        Self { state }
+        self.state = OutState::Closed;
     }
 }
 
 impl<O> PortalFront for OutFront<O> {
     type Event = OutEvent<O>;
 
-    fn poll(&mut self) -> Option<Self::Event> {
-        match *self.state.borrow() {
+    fn poll(self: Pin<&mut Self>) -> Option<Self::Event> {
+        // SAFETY: We're treating this as pinned.
+        let this = unsafe { self.get_unchecked_mut() };
+        match this.state {
             OutState::Yielded(_) => {} // fall-through
             OutState::Neutral | OutState::Closed => return None,
         }
 
-        let OutState::Yielded(event) = self.state.replace(OutState::Neutral) else {
+        let state = std::mem::replace(&mut this.state, OutState::Neutral);
+        let OutState::Yielded(event) = state else {
             unreachable!()
         };
 
@@ -56,50 +51,60 @@ impl<O> PortalFront for OutFront<O> {
     }
 }
 
+impl<O> Default for OutFront<O> {
+    fn default() -> Self {
+        Self {
+            state: OutState::Neutral,
+        }
+    }
+}
+
 /// The [`PortalBack`] implementation.
 pub struct OutBack<O> {
-    state: Rc<OptimizedRefCell<OutState<O>>>,
+    state: *mut OutState<O>,
 }
 
 impl<O> Drop for OutBack<O> {
     fn drop(&mut self) {
-        *self.state.borrow_mut() = OutState::Closed;
+        unsafe {
+            *self.state = OutState::Closed;
+        }
     }
 }
 
 impl<O> OutBack<O> {
-    fn new(state: Rc<OptimizedRefCell<OutState<O>>>) -> Self {
-        Self { state }
-    }
-
     /// Sends an event out of the coroutine.
     pub fn send(&mut self, event: O) -> impl Future<Output = ()> + use<'_, O> {
-        SendFuture::new(self.state.as_ref(), event)
+        unsafe { SendFuture::new(&mut *self.state, event) }
     }
 }
 
-impl<O> PortalBack for OutBack<O> {
+impl<O> PortalBack for OutBack<O>
+where
+    O: Unpin,
+{
     type Front = OutFront<O>;
 
-    fn new_portal() -> (Self::Front, Self) {
-        let state = Rc::new(OptimizedRefCell::new(OutState::Neutral));
-        (Self::Front::new(state.clone()), Self::new(state))
+    fn new(mut front: Pin<&mut Self::Front>) -> Self {
+        Self {
+            state: &mut front.state as *mut _,
+        }
     }
 }
 
 struct SendFuture<'a, O> {
-    state: &'a OptimizedRefCell<OutState<O>>,
+    state: &'a mut OutState<O>,
 }
 
 impl<'a, O> SendFuture<'a, O> {
-    fn new(state: &'a OptimizedRefCell<OutState<O>>, event: O) -> Self {
-        match *state.borrow() {
+    fn new(state: &'a mut OutState<O>, event: O) -> Self {
+        match state {
             OutState::Neutral => {} // OK: fall-through
             OutState::Yielded(_) => panic!("Started send while state is Yielded."),
             OutState::Closed => panic!("Started send while state is Closed."),
         }
 
-        *state.borrow_mut() = OutState::Yielded(event);
+        *state = OutState::Yielded(event);
 
         Self { state }
     }
@@ -109,7 +114,7 @@ impl<O> Future for SendFuture<'_, O> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match *self.state.borrow() {
+        match self.state {
             OutState::Yielded(_) => Poll::Pending,
             OutState::Neutral => Poll::Ready(()),
             OutState::Closed => panic!("Polling while state is Closed"),
@@ -120,7 +125,7 @@ impl<O> Future for SendFuture<'_, O> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{catch_unwind_silent, create_driver, CoroPoll};
+    use crate::{catch_unwind_silent, driver, CoroPoll};
     use std::pin::pin;
     use std::sync::Mutex;
 
@@ -137,7 +142,7 @@ mod test {
 
     #[test]
     fn test_valid() {
-        let mut driver = pin!(create_driver(|back| create_machine(back, &[150, 52, 666])));
+        let mut driver = pin!(driver(|back| create_machine(back, &[150, 52, 666])));
 
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), driver.poll());
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), driver.poll());
@@ -146,7 +151,7 @@ mod test {
 
     #[test]
     fn test_poll_after_completion() {
-        let mut driver = pin!(create_driver(|back| create_machine(back, &[150, 52, 666])));
+        let mut driver = pin!(driver(|back| create_machine(back, &[150, 52, 666])));
 
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), driver.poll());
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), driver.poll());

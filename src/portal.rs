@@ -14,6 +14,8 @@
 //! - [`Output`](output): Allows for events to be sent out of the coroutine (creating a generator).
 //! - [`Input & output`](inout): Allows for events into and out of the coroutine.
 
+use std::pin::Pin;
+
 pub mod inout;
 pub mod input;
 pub mod output;
@@ -30,14 +32,14 @@ pub trait PortalFront {
     ///
     /// The [`PortalFront`] implementation must _consume_ the events that are returned via this function call. [`Driver`]
     /// will call this function repeatedly until `None` is returned before advancing the [`Future`].
-    fn poll(&mut self) -> Option<Self::Event>;
+    fn poll(self: Pin<&mut Self>) -> Option<Self::Event>;
 }
 
 /// The back side of a portal.
 pub trait PortalBack {
     /// The type of the back side of the portal.
-    type Front: PortalFront;
+    type Front: PortalFront + Unpin;
 
-    /// Creates a new portal.
-    fn new_portal() -> (Self::Front, Self);
+    /// Creates a new instance.
+    fn new(front: Pin<&mut Self::Front>) -> Self;
 }

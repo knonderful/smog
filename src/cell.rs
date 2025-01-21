@@ -1,3 +1,4 @@
+#![allow(unused)]
 #[cfg(not(debug_assertions))]
 use optimized::{XRef, XRefCell, XRefMut};
 #[cfg(debug_assertions)]

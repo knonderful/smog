@@ -1,10 +1,8 @@
 //! A portal implementation that supports input events.
 
-use crate::cell::OptimizedRefCell;
 use crate::portal::{PortalBack, PortalFront};
 use std::future::Future;
 use std::pin::Pin;
-use std::rc::Rc;
 use std::task::{Context, Poll};
 
 enum InState<I> {
@@ -28,22 +26,18 @@ pub enum InEvent {
 
 /// The [`PortalFront`] implementation.
 pub struct InFront<I> {
-    state: Rc<OptimizedRefCell<InState<I>>>,
+    state: InState<I>,
 }
 
 impl<I> Drop for InFront<I> {
     fn drop(&mut self) {
-        *self.state.borrow_mut() = InState::Closed;
+        self.state = InState::Closed;
     }
 }
 
 impl<I> InFront<I> {
-    fn new(state: Rc<OptimizedRefCell<InState<I>>>) -> Self {
-        Self { state }
-    }
-
     pub fn provide(&mut self, event: I) {
-        match *self.state.borrow() {
+        match &self.state {
             InState::AwaitingConfirmed => {} // OK: fall-through
             InState::Neutral => panic!("Providing a new input while state is Neutral."),
             InState::AwaitingSignalled => panic!("Providing a new input while state is AwaitingSignalled."),
@@ -51,62 +45,74 @@ impl<I> InFront<I> {
             InState::Closed => panic!("Providing an input event on a closed portal."),
         }
 
-        *self.state.borrow_mut() = InState::FrontProvided(event);
+        self.state = InState::FrontProvided(event);
     }
 }
 
 impl<I> PortalFront for InFront<I> {
     type Event = InEvent;
 
-    fn poll(&mut self) -> Option<Self::Event> {
-        match *self.state.borrow() {
+    fn poll(self: Pin<&mut Self>) -> Option<Self::Event> {
+        // SAFETY: We're treating this as pinned.
+        let this = unsafe { self.get_unchecked_mut() };
+        match this.state {
             InState::AwaitingSignalled => {} // fall-through
             InState::Neutral | InState::AwaitingConfirmed | InState::FrontProvided(_) | InState::Closed => return None,
         }
 
-        *self.state.borrow_mut() = InState::AwaitingConfirmed;
+        this.state = InState::AwaitingConfirmed;
         Some(InEvent::Awaiting)
+    }
+}
+
+impl<I> Default for InFront<I> {
+    fn default() -> Self {
+        Self {
+            state: InState::Neutral,
+        }
     }
 }
 
 /// The [`PortalBack`] implementation.
 pub struct InBack<I> {
-    state: Rc<OptimizedRefCell<InState<I>>>,
+    state: *mut InState<I>,
 }
 
 impl<I> Drop for InBack<I> {
     fn drop(&mut self) {
-        *self.state.borrow_mut() = InState::Closed;
+        unsafe {
+            *self.state = InState::Closed;
+        }
     }
 }
 
 impl<I> InBack<I> {
-    fn new(state: Rc<OptimizedRefCell<InState<I>>>) -> Self {
-        Self { state }
-    }
-
     /// Receives an event from the outside of the coroutine.
     pub fn receive(&mut self) -> impl Future<Output = I> + use<'_, I> {
-        ReceiveFuture::new(self.state.as_ref())
+        unsafe { ReceiveFuture::new(&mut *self.state) }
     }
 }
 
-impl<I> PortalBack for InBack<I> {
+impl<I> PortalBack for InBack<I>
+where
+    I: Unpin,
+{
     type Front = InFront<I>;
 
-    fn new_portal() -> (Self::Front, Self) {
-        let state = Rc::new(OptimizedRefCell::new(InState::Neutral));
-        (Self::Front::new(state.clone()), Self::new(state))
+    fn new(mut front: Pin<&mut Self::Front>) -> Self {
+        Self {
+            state: &mut front.state as *mut _,
+        }
     }
 }
 
 struct ReceiveFuture<'a, I> {
-    state: &'a OptimizedRefCell<InState<I>>,
+    state: &'a mut InState<I>,
 }
 
 impl<'a, I> ReceiveFuture<'a, I> {
-    fn new(state: &'a OptimizedRefCell<InState<I>>) -> Self {
-        match *state.borrow() {
+    fn new(state: &'a mut InState<I>) -> Self {
+        match state {
             InState::Neutral => {} // OK: fall-through
             InState::AwaitingSignalled => panic!("Started receive while state is BackAwaiting."),
             InState::AwaitingConfirmed => {
@@ -116,7 +122,7 @@ impl<'a, I> ReceiveFuture<'a, I> {
             InState::Closed => panic!("Started receive while state is Closed."),
         }
 
-        *state.borrow_mut() = InState::AwaitingSignalled;
+        *state = InState::AwaitingSignalled;
 
         Self { state }
     }
@@ -125,14 +131,15 @@ impl<'a, I> ReceiveFuture<'a, I> {
 impl<I> Future for ReceiveFuture<'_, I> {
     type Output = I;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match *self.state.borrow() {
+    fn poll(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match &self.state {
             InState::AwaitingSignalled | InState::AwaitingConfirmed | InState::Neutral => return Poll::Pending,
             InState::FrontProvided(_) => {} // fall-through
             InState::Closed => panic!("Polling while state is Closed"),
         }
 
-        let InState::FrontProvided(event) = self.state.replace(InState::Neutral) else {
+        let state = std::mem::replace(self.state, InState::Neutral);
+        let InState::FrontProvided(event) = state else {
             unreachable!()
         };
         Poll::Ready(event)
@@ -142,7 +149,7 @@ impl<I> Future for ReceiveFuture<'_, I> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{catch_unwind_silent, create_driver, CoroPoll};
+    use crate::{catch_unwind_silent, driver, CoroPoll};
     use std::pin::pin;
     use std::sync::Mutex;
 
@@ -158,7 +165,7 @@ mod test {
 
     #[test]
     fn test_valid() {
-        let mut driver = pin!(create_driver(create_machine));
+        let mut driver = pin!(driver(create_machine));
 
         assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
         driver.portal().provide(150);
@@ -169,7 +176,7 @@ mod test {
 
     #[test]
     fn test_poll_after_completion() {
-        let mut driver = pin!(create_driver(create_machine));
+        let mut driver = pin!(driver(create_machine));
 
         assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
         driver.portal().provide(150);
@@ -185,7 +192,7 @@ mod test {
 
     #[test]
     fn test_provide_without_await() {
-        let driver = pin!(create_driver(create_machine));
+        let driver = pin!(driver(create_machine));
         let mut driver = Mutex::new(driver);
 
         // Trying to provide input without awaiting first (since the driver hasn't been polled yet)
@@ -195,7 +202,7 @@ mod test {
 
     #[test]
     fn test_poll_after_await() {
-        let mut driver = pin!(create_driver(create_machine));
+        let mut driver = pin!(driver(create_machine));
 
         assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
 

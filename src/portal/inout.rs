@@ -1,10 +1,10 @@
 //! A portal implementation that supports input- and output events. See [`InOutBack`] and [`InOutFront`].
 
-use std::future::Future;
-
 use super::input::*;
 use super::output::*;
 use crate::portal::{PortalBack, PortalFront};
+use std::future::Future;
+use std::pin::Pin;
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum InOutEvent<O> {
@@ -21,10 +21,6 @@ pub struct InOutFront<I, O> {
 }
 
 impl<I, O> InOutFront<I, O> {
-    fn new(input: InFront<I>, output: OutFront<O>) -> Self {
-        Self { input, output }
-    }
-
     pub fn provide(&mut self, event: I) {
         self.input.provide(event);
     }
@@ -33,21 +29,34 @@ impl<I, O> InOutFront<I, O> {
 impl<I, O> PortalFront for InOutFront<I, O> {
     type Event = InOutEvent<O>;
 
-    fn poll(&mut self) -> Option<Self::Event> {
+    fn poll(mut self: Pin<&mut Self>) -> Option<Self::Event> {
         // Prioritize output over input, such that yields arrive before awaits
-        if let Some(event) = self.output.poll() {
+
+        // SAFETY: Returning reference as pin is safe.
+        let output = unsafe { self.as_mut().map_unchecked_mut(|s| &mut s.output) };
+        if let Some(event) = output.poll() {
             return match event {
                 OutEvent::Yielded(value) => Some(InOutEvent::Yielded(value)),
             };
         }
 
-        if let Some(event) = self.input.poll() {
+        // SAFETY: Returning reference as pin is safe.
+        let input = unsafe { self.map_unchecked_mut(|s| &mut s.input) };
+        if let Some(event) = input.poll() {
             return match event {
                 InEvent::Awaiting => Some(InOutEvent::Awaiting),
             };
         }
 
         None
+    }
+}
+
+impl<I, O> Default for InOutFront<I, O> {
+    fn default() -> Self {
+        let input = InFront::default();
+        let output = OutFront::default();
+        Self { input, output }
     }
 }
 
@@ -58,10 +67,6 @@ pub struct InOutBack<I, O> {
 }
 
 impl<I, O> InOutBack<I, O> {
-    fn new(input: InBack<I>, output: OutBack<O>) -> Self {
-        Self { input, output }
-    }
-
     /// See [`OutBack::send()`].
     pub fn send(&mut self, event: O) -> impl Future<Output = ()> + use<'_, I, O> {
         self.output.send(event)
@@ -73,21 +78,24 @@ impl<I, O> InOutBack<I, O> {
     }
 }
 
-impl<I, O> PortalBack for InOutBack<I, O> {
+impl<I, O> PortalBack for InOutBack<I, O>
+where
+    I: Unpin,
+    O: Unpin,
+{
     type Front = InOutFront<I, O>;
 
-    fn new_portal() -> (Self::Front, Self) {
-        let (in_front, in_back) = InBack::new_portal();
-        let (out_front, out_back) = OutBack::new_portal();
-
-        (Self::Front::new(in_front, out_front), Self::new(in_back, out_back))
+    fn new(mut front: Pin<&mut Self::Front>) -> Self {
+        let input = InBack::new(Pin::new(&mut front.input));
+        let output = OutBack::new(Pin::new(&mut front.output));
+        Self { input, output }
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{catch_unwind_silent, create_driver, CoroPoll};
+    use crate::{catch_unwind_silent, driver, CoroPoll};
     use std::pin::pin;
     use std::sync::Mutex;
 
@@ -107,7 +115,7 @@ mod test {
 
     #[test]
     fn test_valid() {
-        let mut driver = pin!(create_driver(create_machine));
+        let mut driver = pin!(driver(create_machine));
 
         assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
         assert_eq!(CoroPoll::Event(InOutEvent::Awaiting), driver.poll());
@@ -121,7 +129,7 @@ mod test {
 
     #[test]
     fn test_poll_after_completion() {
-        let mut driver = pin!(create_driver(create_machine));
+        let mut driver = pin!(driver(create_machine));
 
         assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
         assert_eq!(CoroPoll::Event(InOutEvent::Awaiting), driver.poll());
@@ -140,7 +148,7 @@ mod test {
 
     #[test]
     fn test_provide_without_await_1() {
-        let driver = pin!(create_driver(create_machine));
+        let driver = pin!(driver(create_machine));
         let mut driver = Mutex::new(driver);
 
         // Trying to provide input without awaiting first (since the driver hasn't been polled yet)
@@ -150,7 +158,7 @@ mod test {
 
     #[test]
     fn test_provide_without_await_2() {
-        let mut driver = pin!(create_driver(create_machine));
+        let mut driver = pin!(driver(create_machine));
 
         assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
 
@@ -163,7 +171,7 @@ mod test {
 
     #[test]
     fn test_poll_after_await() {
-        let mut driver = pin!(create_driver(create_machine));
+        let mut driver = pin!(driver(create_machine));
 
         assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
         assert_eq!(CoroPoll::Event(InOutEvent::Awaiting), driver.poll());

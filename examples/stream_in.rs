@@ -1,9 +1,9 @@
 //! This example shows how to stream data into a coroutine. The final product is the result of the coroutine.
 
 use smog::portal::input::{InBack, InEvent, InFront};
-use smog::{create_driver, CoroPoll, Driver};
+use smog::{driver, CoroPoll, Driver, Storage};
 use std::future::Future;
-use std::pin::{pin, Pin};
+use std::pin::Pin;
 
 enum StreamingEvent<'a> {
     OpenDocument { name: String, content_type: String },
@@ -48,9 +48,10 @@ async fn highlight(mut portal: InBack<StreamingEvent<'_>>, pattern: &str) -> Res
     Ok(doc)
 }
 
-fn drive<'a>(
-    driver: &mut Pin<&mut Driver<InFront<StreamingEvent>, impl Future<Output = Result<Document, &'a str>> + Sized>>,
-) {
+fn drive<'a, Fut>(driver: &mut Driver<Pin<Box<Storage<InFront<StreamingEvent<'a>>, Fut>>>, Fut::Output>)
+where
+    Fut: Future<Output = Result<Document, &'static str>> + 'a,
+{
     match driver.poll() {
         CoroPoll::Event(InEvent::Awaiting) => {}
         CoroPoll::Result(result) => match result {
@@ -78,7 +79,7 @@ multi-editor support with auto-completion and type inspections, an auto-
 formatter, and more."#;
 
     // The driver is what allows us to both advance the state machine and receive events from the coroutine.
-    let driver = &mut pin!(create_driver(|back| highlight(back, "Rust")));
+    let driver = &mut driver(|back| highlight(back, "Rust"));
 
     // We must drive the coroutine to bring it into the first awaiting state.
     drive(driver);
