@@ -4,9 +4,11 @@
 //! - [`PortalBack`]: the side that plugs in to the coroutine.
 //! - [`PortalFront`]: the side that plugs into the [`Driver`](crate::Driver).
 //!
-//! Two implementations form a pair via the [`PortalBack::Front`] assocated type. A portal can be created via
-//! [`PortalBack::new_portal()`]. Additionally, the front must implement [`PortalFront`] in order to be able to be
-//! plugged into the [`Driver`](crate::Driver).
+//! Two implementations form a pair via the [`PortalBack::Front`] associated type.
+//!
+//! A portal is created by first creating a [`PortalFront`] and then passing a pinned instance to [`PortalBack::new()`].
+//! It is recommendable for [`PortalFront`] to implement [`Default`]. This enables ergonomic functions like
+//! [`driver()`](crate::driver), where the user doesn't need to explicitly create the [`PortalFront`].
 //!
 //! This crate comes with some portal implementations for common use:
 //!
@@ -30,8 +32,9 @@ pub trait PortalFront {
     ///
     /// # Important
     ///
-    /// The [`PortalFront`] implementation must _consume_ the events that are returned via this function call. [`Driver`]
-    /// will call this function repeatedly until `None` is returned before advancing the [`Future`].
+    /// The [`PortalFront`] implementation must _consume_ the events that are returned via this function call.
+    /// [`Driver`](crate::Driver) will call this function repeatedly until `None` is returned before advancing the
+    /// [`std::future::Future`].
     fn poll(self: Pin<&mut Self>) -> Option<Self::Event>;
 }
 
