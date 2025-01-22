@@ -141,7 +141,7 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 ///
 /// See [crate documentation](crate) for more information.
 #[allow(clippy::type_complexity)]
-pub fn driver<Bk, Fut>(create_future: impl FnOnce(Bk) -> Fut) -> Driver<Pin<Box<Storage<Bk::Front, Fut>>>, Fut::Output>
+pub fn driver<Bk, Fut>(create_future: impl FnOnce(Bk) -> Fut) -> Driver<Pin<Box<Storage<Bk::Front, Fut>>>>
 where
     Bk: PortalBack,
     Fut: Future,
@@ -155,12 +155,11 @@ where
 /// This is useful for constructing a driver that is allocated on the stack.
 ///
 /// See [crate documentation](crate) for more information.
-pub fn driver_with_storage<St, Fut, Bk>(storage: St, create_future: impl FnOnce(Bk) -> Fut) -> Driver<St, Fut::Output>
+pub fn driver_with_storage<St, Fut, Bk>(storage: St, create_future: impl FnOnce(Bk) -> Fut) -> Driver<St>
 where
-    St: AsPin<Storage<Bk::Front, Fut>>,
+    St: AsStorage<Front = Bk::Front, Future = Fut>,
     Fut: Future,
     Bk: PortalBack,
-    Bk::Front: Default,
 {
     new_driver(storage, create_future)
 }
@@ -222,33 +221,53 @@ impl<Fr, Fut> Storage<Fr, Fut> {
     }
 }
 
-/// Trait for retrieving a pinned reference from a reference.
-pub trait AsPin<T> {
-    fn as_pin(&mut self) -> Pin<&mut T>;
+/// Trait for retrieving a pinned [`Storage`] from a reference.
+pub trait AsStorage {
+    type Front: PortalFront;
+    type Future: Future;
+
+    fn as_pin(&mut self) -> Pin<&mut Storage<Self::Front, Self::Future>>;
 }
 
-impl<T> AsPin<T> for Pin<Box<T>> {
-    fn as_pin(&mut self) -> Pin<&mut T> {
+impl<Fr, Fut> AsStorage for Pin<Box<Storage<Fr, Fut>>>
+where
+    Fr: PortalFront,
+    Fut: Future,
+{
+    type Front = Fr;
+    type Future = Fut;
+
+    fn as_pin(&mut self) -> Pin<&mut Storage<Self::Front, Self::Future>> {
         self.as_mut()
     }
 }
 
-impl<T> AsPin<T> for Pin<&mut T> {
-    fn as_pin(&mut self) -> Pin<&mut T> {
+impl<Fr, Fut> AsStorage for Pin<&mut Storage<Fr, Fut>>
+where
+    Fr: PortalFront,
+    Fut: Future,
+{
+    type Front = Fr;
+    type Future = Fut;
+
+    fn as_pin(&mut self) -> Pin<&mut Storage<Self::Front, Self::Future>> {
         self.as_mut()
     }
 }
 
 /// A coroutine driver. See the [crate documentation](crate) for more information.
-pub struct Driver<St, Res> {
+pub struct Driver<St>
+where
+    St: AsStorage,
+{
     storage: St,
     waker: Waker,
-    state: CoroState<Res>,
+    state: CoroState<<<St as AsStorage>::Future as Future>::Output>,
 }
 
-fn new_driver<St, Bk, Fut>(mut storage: St, create_future: impl FnOnce(Bk) -> Fut) -> Driver<St, Fut::Output>
+fn new_driver<St, Bk, Fut>(mut storage: St, create_future: impl FnOnce(Bk) -> Fut) -> Driver<St>
 where
-    St: AsPin<Storage<Bk::Front, Fut>>,
+    St: AsStorage<Front = Bk::Front, Future = Fut>,
     Bk: PortalBack,
     Fut: Future,
 {
@@ -262,24 +281,21 @@ where
     }
 }
 
-impl<St, Res> Driver<St, Res> {
+impl<St> Driver<St>
+where
+    St: AsStorage,
+{
     /// Retrieves a reference to the [`PortalFront`].
-    pub fn portal<'a, Fr, Fut: 'a>(&'a mut self) -> Pin<&'a mut Fr>
-    where
-        St: AsPin<Storage<Fr, Fut>>,
-    {
+    pub fn portal(&mut self) -> Pin<&mut St::Front> {
         self.storage.as_pin().pinned_front()
     }
 
     /// Polls the [`Driver`] for events. Internally, calling this function advances the underlying future and iteracts
     /// with the portal.
     #[must_use]
-    pub fn poll<Fr, Fut>(&mut self) -> CoroPoll<Fr::Event, Fut::Output>
-    where
-        St: AsPin<Storage<Fr, Fut>>,
-        Fr: PortalFront,
-        Fut: Future<Output = Res>,
-    {
+    pub fn poll(
+        &mut self,
+    ) -> CoroPoll<<<St as AsStorage>::Front as PortalFront>::Event, <<St as AsStorage>::Future as Future>::Output> {
         let mut storage = self.storage.as_pin();
         if let Some(event) = storage.as_mut().pinned_front().poll() {
             return CoroPoll::Event(event);

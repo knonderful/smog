@@ -48,7 +48,8 @@ async fn highlight(mut portal: InBack<StreamingEvent<'_>>, pattern: &str) -> Res
     Ok(doc)
 }
 
-fn drive<'a, Fut>(driver: &mut Driver<Pin<Box<Storage<InFront<StreamingEvent<'a>>, Fut>>>, Fut::Output>)
+#[allow(clippy::type_complexity)]
+fn drive<'a, Fut>(driver: &mut Driver<Pin<Box<Storage<InFront<StreamingEvent<'a>>, Fut>>>>)
 where
     Fut: Future<Output = Result<Document, &'static str>> + 'a,
 {
