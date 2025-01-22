@@ -226,7 +226,7 @@ pub trait AsStorage {
     type Front: PortalFront;
     type Future: Future;
 
-    fn as_pin(&mut self) -> Pin<&mut Storage<Self::Front, Self::Future>>;
+    fn as_storage(&mut self) -> Pin<&mut Storage<Self::Front, Self::Future>>;
 }
 
 impl<Fr, Fut> AsStorage for Pin<Box<Storage<Fr, Fut>>>
@@ -237,7 +237,7 @@ where
     type Front = Fr;
     type Future = Fut;
 
-    fn as_pin(&mut self) -> Pin<&mut Storage<Self::Front, Self::Future>> {
+    fn as_storage(&mut self) -> Pin<&mut Storage<Self::Front, Self::Future>> {
         self.as_mut()
     }
 }
@@ -250,7 +250,7 @@ where
     type Front = Fr;
     type Future = Fut;
 
-    fn as_pin(&mut self) -> Pin<&mut Storage<Self::Front, Self::Future>> {
+    fn as_storage(&mut self) -> Pin<&mut Storage<Self::Front, Self::Future>> {
         self.as_mut()
     }
 }
@@ -271,8 +271,8 @@ where
     Bk: PortalBack,
     Fut: Future,
 {
-    let back = Bk::new(storage.as_pin().pinned_front());
-    storage.as_pin().supply_future(create_future(back));
+    let back = Bk::new(storage.as_storage().pinned_front());
+    storage.as_storage().supply_future(create_future(back));
 
     Driver {
         storage,
@@ -287,7 +287,7 @@ where
 {
     /// Retrieves a reference to the [`PortalFront`].
     pub fn portal(&mut self) -> Pin<&mut St::Front> {
-        self.storage.as_pin().pinned_front()
+        self.storage.as_storage().pinned_front()
     }
 
     /// Polls the [`Driver`] for events. Internally, calling this function advances the underlying future and iteracts
@@ -296,7 +296,7 @@ where
     pub fn poll(
         &mut self,
     ) -> CoroPoll<<<St as AsStorage>::Front as PortalFront>::Event, <<St as AsStorage>::Future as Future>::Output> {
-        let mut storage = self.storage.as_pin();
+        let mut storage = self.storage.as_storage();
         if let Some(event) = storage.as_mut().pinned_front().poll() {
             return CoroPoll::Event(event);
         }
