@@ -67,7 +67,7 @@
 //!     .into_iter();
 //!
 //!     // Create the coroutine with the future that represents the work
-//!     let mut parser = smog::driver(|back| parse_and_find(back, "Jo"));
+//!     let mut parser = smog::driver().function(|back| parse_and_find(back, "Jo"));
 //!
 //!     let mut yielded = Vec::new();
 //!     let day;
@@ -131,7 +131,7 @@ pub mod builder;
 mod cell;
 pub mod portal;
 
-use crate::portal::{PortalBack, PortalFront};
+use crate::portal::PortalFront;
 use std::future::Future;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -140,49 +140,9 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 /// Create a new [`Driver`] builder.
 ///
-/// Creating a [`Driver`] involves 3 steps:
-/// - Step 1: Choose the [`AsStorage`] implementation (heap or stack).
-/// - Step 2: Provide the [`PortalFront`] object.
-/// - Step 3: Provide the [`Future`] object.
-///
-/// The builder provides several methods for traversing this 3-step process:
-/// - Step 1 can be skipped if heap allocation is used ([`BuilderStep1::front()`](builder::BuilderStep1::front)).
-/// - Step 2 can be skipped if the [`PortalBack::Front`] for the coroutine function implements [`Default`]
-///   ([`BuilderStep2::coro()`](builder::BuilderStep1::coro)).
-/// - Both step 1 and 2 can be skipped if both of the above apply
-///   ([`BuilderStep1::coro()`](builder::BuilderStep1::coro)).
-///
-/// If the [`Driver`] storage is to be allocated on the stack the user must first create a pinned [`Storage`] and pass
-/// that into [`BuilderStep1::storage()`](builder::BuilderStep1::storage).
-pub fn driver_builder() -> builder::BuilderStep1 {
-    builder::BuilderStep1
-}
-
-/// Create a new [`Driver`] from a function that implements a coroutine. The storage is allocated on the heap.
-///
-/// See [crate documentation](crate) for more information.
-#[allow(clippy::type_complexity)]
-pub fn driver<Bk, Fut>(create_future: impl FnOnce(Bk) -> Fut) -> Driver<Pin<Box<Storage<Bk::Front, Fut>>>>
-where
-    Bk: PortalBack,
-    Fut: Future,
-    Bk::Front: Default,
-{
-    let storage = Box::pin(Storage::new(Bk::Front::default()));
-    driver_with_storage(storage, create_future)
-}
-
-/// Create a new [`Driver`] from a function that implements a coroutine with the provided [`Storage`].
-/// This is useful for constructing a driver that is allocated on the stack.
-///
-/// See [crate documentation](crate) for more information.
-pub fn driver_with_storage<St, Fut, Bk>(storage: St, create_future: impl FnOnce(Bk) -> Fut) -> Driver<St>
-where
-    St: AsStorage<Front = Bk::Front, Future = Fut>,
-    Fut: Future,
-    Bk: PortalBack,
-{
-    new_driver(storage, create_future)
+/// See [`builder`] for more information.
+pub fn driver() -> builder::BuilderStep1 {
+    builder::BuilderStep1::default()
 }
 
 pub struct Storage<Fr, Fut> {
@@ -192,17 +152,8 @@ pub struct Storage<Fr, Fut> {
     supplied_future: bool,
 }
 
-impl<Fr, Fut> Storage<Fr, Fut> {
-    fn new(front: Fr) -> Self {
-        Self {
-            front: MaybeUninit::new(front),
-            future: MaybeUninit::uninit(),
-            supplied_front: true,
-            supplied_future: false,
-        }
-    }
-
-    fn new2() -> Self {
+impl<Fr, Fut> Default for Storage<Fr, Fut> {
+    fn default() -> Self {
         Self {
             front: MaybeUninit::uninit(),
             future: MaybeUninit::uninit(),
@@ -210,16 +161,20 @@ impl<Fr, Fut> Storage<Fr, Fut> {
             supplied_future: false,
         }
     }
+}
 
+impl<Fr, Fut> Storage<Fr, Fut> {
     fn pinned_front(self: Pin<&mut Self>) -> Pin<&mut Fr> {
-        debug_assert!(self.supplied_front, "Front not yet supplied");
+        #[cfg(debug_assertions)]
+        assert!(self.supplied_front, "Front not yet supplied");
 
         let this = unsafe { self.get_unchecked_mut() };
         unsafe { Pin::new_unchecked(this.front.assume_init_mut()) }
     }
 
     fn pinned_future(self: Pin<&mut Self>) -> Pin<&mut Fut> {
-        debug_assert!(self.supplied_future, "Future not yet supplied");
+        #[cfg(debug_assertions)]
+        assert!(self.supplied_future, "Future not yet supplied");
 
         let this = unsafe { self.get_unchecked_mut() };
         unsafe { Pin::new_unchecked(this.future.assume_init_mut()) }
@@ -240,7 +195,7 @@ impl<Fr, Fut> Storage<Fr, Fut> {
     }
 
     fn drop_front(&mut self) {
-        debug_assert!(
+        assert!(
             !self.supplied_future,
             "Attempt at dropping front while future is still alive."
         );
@@ -265,15 +220,6 @@ impl<Fr, Fut> Storage<Fr, Fut> {
     #[cfg(debug_assertions)]
     fn is_initialized(&self) -> bool {
         self.supplied_front && self.supplied_future
-    }
-}
-
-impl<Fr, Fut> Default for Storage<Fr, Fut>
-where
-    Fr: Default,
-{
-    fn default() -> Self {
-        Self::new(Fr::default())
     }
 }
 
@@ -328,18 +274,6 @@ where
     state: CoroState<<<St as AsStorage>::Future as Future>::Output>,
 }
 
-fn new_driver<St, Bk, Fut>(mut storage: St, create_future: impl FnOnce(Bk) -> Fut) -> Driver<St>
-where
-    St: AsStorage<Front = Bk::Front, Future = Fut>,
-    Bk: PortalBack,
-    Fut: Future,
-{
-    let back = Bk::new(storage.as_storage().pinned_front());
-    storage.as_storage().supply_future(create_future(back));
-
-    Driver::new(storage)
-}
-
 impl<St> Driver<St>
 where
     St: AsStorage,
@@ -347,8 +281,10 @@ where
     /// Creates a new instance.
     ///
     /// **IMPORTANT: The provided storage must be fully initialized at this point.**
+    #[allow(unused_mut)]
     fn new(mut storage: St) -> Self {
-        debug_assert!(storage.as_storage().is_initialized());
+        #[cfg(debug_assertions)]
+        assert!(storage.as_storage().is_initialized());
 
         Self {
             storage,
@@ -458,7 +394,6 @@ mod test {
     use super::*;
     use crate::portal::input::InBack;
     use std::any::Any;
-    use std::pin::pin;
     use std::sync::Mutex;
     use std::thread::sleep;
 
@@ -488,7 +423,7 @@ mod test {
             InfiniteLoopFuture.await;
         };
 
-        let driver = pin!(driver(coro));
+        let driver = driver().function(coro);
         let mut driver = Mutex::new(driver);
 
         let result = catch_unwind_silent(move || driver.get_mut().unwrap().poll());
@@ -526,7 +461,7 @@ mod test {
             ForeignFuture.await;
         };
 
-        let driver = pin!(driver(coro));
+        let driver = driver().function(coro);
         let mut driver = Mutex::new(driver);
 
         let result = catch_unwind_silent(move || driver.get_mut().unwrap().poll());

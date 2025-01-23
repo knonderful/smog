@@ -126,7 +126,6 @@ impl<O> Future for SendFuture<'_, O> {
 mod test {
     use super::*;
     use crate::{catch_unwind_silent, driver, CoroPoll};
-    use std::pin::pin;
     use std::sync::Mutex;
 
     async fn create_machine(mut portal: OutBack<u64>, input: &[u32]) -> u64 {
@@ -142,7 +141,7 @@ mod test {
 
     #[test]
     fn test_valid() {
-        let mut driver = pin!(driver(|back| create_machine(back, &[150, 52, 666])));
+        let mut driver = driver().function(|back| create_machine(back, &[150, 52, 666]));
 
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), driver.poll());
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), driver.poll());
@@ -151,7 +150,7 @@ mod test {
 
     #[test]
     fn test_poll_after_completion() {
-        let mut driver = pin!(driver(|back| create_machine(back, &[150, 52, 666])));
+        let mut driver = driver().function(|back| create_machine(back, &[150, 52, 666]));
 
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(300)), driver.poll());
         assert_eq!(CoroPoll::Event(OutEvent::Yielded(104)), driver.poll());

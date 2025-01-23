@@ -115,7 +115,7 @@ mod test {
 
     #[test]
     fn test_valid() {
-        let mut driver = pin!(driver(create_machine));
+        let mut driver = driver().function(create_machine);
 
         assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
         assert_eq!(CoroPoll::Event(InOutEvent::Awaiting), driver.poll());
@@ -129,7 +129,7 @@ mod test {
 
     #[test]
     fn test_poll_after_completion() {
-        let mut driver = pin!(driver(create_machine));
+        let mut driver = driver().function(create_machine);
 
         assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
         assert_eq!(CoroPoll::Event(InOutEvent::Awaiting), driver.poll());
@@ -148,7 +148,7 @@ mod test {
 
     #[test]
     fn test_provide_without_await_1() {
-        let driver = pin!(driver(create_machine));
+        let driver = driver().function(create_machine);
         let mut driver = Mutex::new(driver);
 
         // Trying to provide input without awaiting first (since the driver hasn't been polled yet)
@@ -158,7 +158,7 @@ mod test {
 
     #[test]
     fn test_provide_without_await_2() {
-        let mut driver = pin!(driver(create_machine));
+        let mut driver = driver().function(create_machine);
 
         assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
 
@@ -171,7 +171,8 @@ mod test {
 
     #[test]
     fn test_poll_after_await() {
-        let mut driver = pin!(driver(create_machine));
+        let storage = pin!(Default::default());
+        let mut driver = driver().storage(storage).function(create_machine);
 
         assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
         assert_eq!(CoroPoll::Event(InOutEvent::Awaiting), driver.poll());
