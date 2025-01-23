@@ -4,15 +4,15 @@ use smog::portal::output::{OutBack, OutEvent};
 use smog::{driver, CoroPoll, Storage};
 use std::pin::pin;
 
-async fn fibonacci(mut portal: OutBack<u8>) {
+async fn fibonacci(mut portal: OutBack<u64>) {
     // Fibonacci is a good example of the power of coroutines, since this "anomaly" at the start would require a lot
     // more complex code with "normal" code.
     for i in 0..2 {
         portal.send(i).await;
     }
 
-    let mut a: u8 = 0;
-    let mut b: u8 = 1;
+    let mut a: u64 = 0;
+    let mut b: u64 = 1;
 
     loop {
         // Abort when we overflow
@@ -34,10 +34,12 @@ fn main() {
     let mut driver = driver().storage(storage).function(fibonacci);
 
     // The other variant (CoroPoll::Result) would mean that the coroutine has finished, which would end this loop.
+    let mut space = "";
     while let CoroPoll::Event(portal_event) = driver.poll() {
         match portal_event {
-            OutEvent::Yielded(val) => print!(" {val}"),
+            OutEvent::Yielded(val) => print!("{space}{val}"),
         }
+        space = " ";
     }
     println!();
 }
