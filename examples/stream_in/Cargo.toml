@@ -1,0 +1,9 @@
+[package]
+name = "stream_in"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+smog = { workspace = true }
