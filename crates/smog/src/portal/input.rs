@@ -38,8 +38,7 @@ impl<I> Drop for InFront<I> {
 impl<I> InFront<I> {
     pub fn provide(&mut self, event: I) {
         match &self.state {
-            InState::AwaitingConfirmed => {} // OK: fall-through
-            InState::Neutral => panic!("Providing a new input while state is Neutral."),
+            InState::Neutral | InState::AwaitingConfirmed => {} // OK: fall-through
             InState::AwaitingSignalled => panic!("Providing a new input while state is AwaitingSignalled."),
             InState::FrontProvided(_) => panic!("Providing a new input event on a non-empty slot. Make sure to consume provided values in the coroutine before providing new ones."),
             InState::Closed => panic!("Providing an input event on a closed portal."),
@@ -113,16 +112,14 @@ struct ReceiveFuture<'a, I> {
 impl<'a, I> ReceiveFuture<'a, I> {
     fn new(state: &'a mut InState<I>) -> Self {
         match state {
-            InState::Neutral => {} // OK: fall-through
+            InState::Neutral => *state = InState::AwaitingSignalled,
             InState::AwaitingSignalled => panic!("Started receive while state is BackAwaiting."),
             InState::AwaitingConfirmed => {
                 panic!("Started receive while state is AwaitingConfirmed.")
             }
-            InState::FrontProvided(_) => panic!("Started receive while state is FrontProvided."),
+            InState::FrontProvided(_) => {} // fall-through
             InState::Closed => panic!("Started receive while state is Closed."),
         }
-
-        *state = InState::AwaitingSignalled;
 
         Self { state }
     }
@@ -173,6 +170,17 @@ mod test {
         assert_eq!(CoroPoll::Result(404), driver.poll());
     }
 
+    /// Like `test_valid`, but without the poll-before-provide.
+    #[test]
+    fn test_valid_without_prepoll() {
+        let mut driver = driver().function(create_machine);
+
+        driver.portal().provide(150);
+        assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
+        driver.portal().provide(52);
+        assert_eq!(CoroPoll::Result(404), driver.poll());
+    }
+
     #[test]
     fn test_poll_after_completion() {
         let mut driver = driver().function(create_machine);
@@ -191,12 +199,12 @@ mod test {
 
     #[test]
     fn test_provide_without_await() {
-        let driver = driver().function(create_machine);
-        let mut driver = Mutex::new(driver);
+        let mut driver = driver().function(create_machine);
 
-        // Trying to provide input without awaiting first (since the driver hasn't been polled yet)
-        let result = catch_unwind_silent(move || driver.get_mut().unwrap().portal().provide(150));
-        assert!(result.is_err());
+        driver.portal().provide(150);
+        assert_eq!(CoroPoll::Event(InEvent::Awaiting), driver.poll());
+        driver.portal().provide(52);
+        assert_eq!(CoroPoll::Result(404), driver.poll());
     }
 
     #[test]

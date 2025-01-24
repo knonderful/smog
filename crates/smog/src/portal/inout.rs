@@ -148,12 +148,17 @@ mod test {
 
     #[test]
     fn test_provide_without_await_1() {
-        let driver = driver().function(create_machine);
-        let mut driver = Mutex::new(driver);
+        let mut driver = driver().function(create_machine);
 
         // Trying to provide input without awaiting first (since the driver hasn't been polled yet)
-        let result = catch_unwind_silent(move || driver.get_mut().unwrap().portal().provide(150));
-        assert!(result.is_err());
+        driver.portal().provide(150);
+        assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
+        // No await here, since we provided input "early"
+        assert_eq!(CoroPoll::Event(InOutEvent::Yielded(300)), driver.poll());
+        assert_eq!(CoroPoll::Event(InOutEvent::Awaiting), driver.poll());
+        driver.portal().provide(52);
+        assert_eq!(CoroPoll::Event(InOutEvent::Yielded(104)), driver.poll());
+        assert_eq!(CoroPoll::Result(404), driver.poll());
     }
 
     #[test]
@@ -162,11 +167,14 @@ mod test {
 
         assert_eq!(CoroPoll::Event(InOutEvent::Yielded(13)), driver.poll());
 
-        let mut driver = Mutex::new(driver);
-
         // Trying to provide input without awaiting first (since the driver hasn't reached the await yet)
-        let result = catch_unwind_silent(move || driver.get_mut().unwrap().portal().provide(150));
-        assert!(result.is_err());
+        driver.portal().provide(150);
+        // No await here, since we provided input "early"
+        assert_eq!(CoroPoll::Event(InOutEvent::Yielded(300)), driver.poll());
+        assert_eq!(CoroPoll::Event(InOutEvent::Awaiting), driver.poll());
+        driver.portal().provide(52);
+        assert_eq!(CoroPoll::Event(InOutEvent::Yielded(104)), driver.poll());
+        assert_eq!(CoroPoll::Result(404), driver.poll());
     }
 
     #[test]

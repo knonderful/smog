@@ -314,7 +314,6 @@ where
                 // Drive the future
                 let mut poll_ctx = Context::from_waker(&self.waker);
 
-                // SAFETY: This is OK because `self` is pinned.
                 match storage.as_mut().pinned_future().poll(&mut poll_ctx) {
                     Poll::Pending => {
                         // Now we're expecting at least _one_ event from the portal, since otherwise
