@@ -122,8 +122,8 @@
 //!
 //! - [`Future`] objects must be pinned in order to do anything meaningful with them.
 //! - The [`PortalFront`] holds the state for the portal. This state is likely shared via some sort of reference or
-//!   pointer from [`PortalBack`] into the [`PortalFront`]. This can only be done safely if the [`PortalFront`] is
-//!   pinned.
+//!   pointer from [`PortalBack`](portal::PortalBack) into the [`PortalFront`]. This can only be done safely if the
+//!   [`PortalFront`] is pinned.
 //!
 //! Note that the user may still move the [`Driver`] around; it is only the [`Storage`] that must be pinned.
 

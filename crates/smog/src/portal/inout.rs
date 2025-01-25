@@ -3,6 +3,7 @@
 use super::input::*;
 use super::output::*;
 use crate::portal::{PortalBack, PortalFront};
+use crate::{AsStorage, CoroPoll, Driver};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -89,6 +90,156 @@ where
         let input = InBack::new(Pin::new(&mut front.input));
         let output = OutBack::new(Pin::new(&mut front.output));
         Self { input, output }
+    }
+}
+
+/// Extends [`Driver`] with a function that creates a facade.
+pub trait DriverExt {
+    type Output;
+
+    /// Create a facade.
+    fn facade(self) -> Self::Output;
+}
+
+impl<St, Fut> DriverExt for Driver<St>
+where
+    St: AsStorage<Future = Fut>,
+    Fut: Future,
+{
+    type Output = InOutFacade<St, Fut>;
+
+    fn facade(self) -> Self::Output {
+        InOutFacade::new(self)
+    }
+}
+
+/// A facade for the [`inout`](self) portal.
+///
+/// This facade assumes that every output event is the product of an input event. One input event may yield zero or more
+/// output events.
+///
+/// Normal interaction with this facade looks like this:
+///
+/// - Check for completion with [`result()`](InOutFacade::finalize).
+/// - Drive the underlying coroutine with [`drive()`](InOutFacade::drive), iterating over the output.
+/// - Loop.
+///
+/// # Example
+///
+/// ```
+/// use smog::driver;
+/// use smog::portal::inout::{DriverExt, InOutBack};
+///
+/// async fn coroutine(mut portal: InOutBack<usize, u64>) -> String {
+///     let mut count: u64 = 0;
+///     while count < 10 {
+///         let x = portal.receive().await;
+///         for _ in 0..x {
+///             count += 1;
+///             portal.send(count).await;
+///         }
+///     }
+///
+///     format!("Got {count} points!")
+/// }
+///
+/// # let mut input = vec![2, 5, 1, 3, 8].into_iter();
+/// # let mut get_random_number = move || {
+/// #     input.next().unwrap()
+/// # };
+/// #
+/// let mut facade = driver().function(coroutine).facade();
+/// while !facade.has_finished() {
+///     // Drive the coroutine with a new input.
+///     let input = get_random_number();
+///     // The return type of `drive()` is an iterator over output events.
+///     for output in facade.drive(input) {
+///         println!("Input {input} yielded {output}.");
+///     }
+/// }
+///
+/// println!("{}", facade.finalize().unwrap());
+/// ```
+pub struct InOutFacade<St, Fut>
+where
+    St: AsStorage<Future = Fut>,
+    Fut: Future,
+{
+    driver: Driver<St>,
+    future_result: Option<Fut::Output>,
+}
+
+impl<St, Fut> InOutFacade<St, Fut>
+where
+    St: AsStorage<Future = Fut>,
+    Fut: Future,
+{
+    /// Creates a new instance.
+    pub fn new(driver: Driver<St>) -> Self {
+        Self {
+            driver,
+            future_result: None,
+        }
+    }
+}
+
+impl<St, I, O, Fut> InOutFacade<St, Fut>
+where
+    St: AsStorage<Front = InOutFront<I, O>, Future = Fut>,
+    Fut: Future,
+    I: Unpin,
+    O: Unpin,
+{
+    /// Drives the coroutine with the provided input event. The resulting iterator may generate zero or more output
+    /// events.
+    ///
+    /// The caller should call [`has_result()`](Self::has_finished) before each call to [`drive()`](Self::drive) in order
+    /// to check whether the future is completed. This is even the case if the coroutine does not return a meaningful
+    /// value for the caller.
+    pub fn drive(&mut self, input: I) -> impl Iterator<Item = O> + use<'_, St, I, O, Fut> {
+        self.driver.portal().provide(input);
+        InOutDrive { facade: self }
+    }
+
+    /// Determines whether the underlying coroutine has finished.
+    pub fn has_finished(&self) -> bool {
+        self.future_result.is_some()
+    }
+
+    /// Finalizes this instance and returns the result of the underlying coroutine. Whether the underlying coroutine has
+    /// finished (and, by implication, a result is available) can first be checked with
+    /// [`has_result()`](Self::has_finished).
+    pub fn finalize(self) -> Option<Fut::Output> {
+        self.future_result
+    }
+}
+
+struct InOutDrive<'a, St, Fut>
+where
+    St: AsStorage<Future = Fut>,
+    Fut: Future,
+{
+    facade: &'a mut InOutFacade<St, Fut>,
+}
+
+impl<St, I, O, Fut> Iterator for InOutDrive<'_, St, Fut>
+where
+    St: AsStorage<Front = InOutFront<I, O>, Future = Fut>,
+    Fut: Future,
+{
+    type Item = O;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.facade.driver.poll() {
+            CoroPoll::Event(evt) => match evt {
+                InOutEvent::Awaiting => None,
+                InOutEvent::Yielded(out) => Some(out),
+            },
+            CoroPoll::Result(res) => {
+                self.facade.future_result = Some(res);
+                None
+            }
+        }
     }
 }
 
@@ -190,5 +341,23 @@ mod test {
         // which should cause `Driver` to panic.
         let result = catch_unwind_silent(move || driver.get_mut().unwrap().poll());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_facade() {
+        let mut facade = driver().function(create_machine).facade();
+
+        assert!(!facade.has_finished());
+
+        // The facade assumes that either nothing is yielded before the first await or that the caller doesn't care
+        // whether the yield "belongs to" the input or is an "initial yield". Code that cares about this distinction
+        // will have to use the driver directly (or create some other facade).
+
+        assert_eq!(facade.drive(150).collect::<Vec<_>>(), vec![13, 300]);
+        assert!(!facade.has_finished());
+
+        assert_eq!(facade.drive(52).collect::<Vec<_>>(), vec![104]);
+        assert!(facade.has_finished());
+        assert_eq!(404, facade.finalize().expect("expected a result"));
     }
 }
