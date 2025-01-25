@@ -40,7 +40,7 @@ impl<I> InFront<I> {
         match &self.state {
             InState::Neutral | InState::AwaitingConfirmed => {} // OK: fall-through
             InState::AwaitingSignalled => panic!("Providing a new input while state is AwaitingSignalled."),
-            InState::FrontProvided(_) => panic!("Providing a new input event on a non-empty slot. Make sure to consume provided values in the coroutine before providing new ones."),
+            InState::FrontProvided(_) => panic!("Providing a new input event on a non-empty slot. Make sure to poll the driver after providing an event."),
             InState::Closed => panic!("Providing an input event on a closed portal."),
         }
 
