@@ -10,7 +10,10 @@ use std::{
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
+/// Magic number embedded in the [`State`]. Used as a canary in debug builds only.
 const STATE_MAGIC: u32 = 0x32561810;
+
+/// The generator state.
 struct State<Y> {
     #[cfg(debug_assertions)]
     magic_value: u32,
@@ -18,6 +21,7 @@ struct State<Y> {
 }
 
 impl<Y> State<Y> {
+    /// Asserts the correctness of the embedded magic number.
     #[cfg(debug_assertions)]
     fn assert_magic_number(&self) {
         if self.magic_value != STATE_MAGIC {
@@ -44,6 +48,9 @@ impl<Y> Default for State<Y> {
     }
 }
 
+/// The context inside a generator function.
+///
+/// This can be used to [`emit`](GeneratorContext::emit) (yield) a value to the caller.
 #[derive(Clone)]
 pub struct GeneratorContext<Y> {
     phantom_data: PhantomData<fn() -> Y>,
@@ -57,15 +64,23 @@ impl<Y> GeneratorContext<Y> {
     }
 
     /// Emits (yields) a value from the generator to the caller.
+    ///
+    /// Be sure to call `.await` on the resulting [`Future`].
+    #[must_use]
     pub fn emit(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
         Yield::new(value)
     }
 }
 
-#[must_use]
+/// A yield operation, containing the yielded value.
+///
+/// `Yield` contains a lifetime reference to the [`GeneratorContext`] that spawned it, preventing
+///  multiple yields from existing at the same time (which would be a bug in the generator
+/// function). Additionally, the lifetime reference prevents a `Yield` from escaping the generator
+/// function.
 struct Yield<'a, Y> {
     value: Option<Y>,
-    phantom_data: PhantomData<&'a ()>,
+    phantom_data: PhantomData<&'a mut ()>,
 }
 
 impl<Y> Yield<'_, Y> {
@@ -118,6 +133,7 @@ impl<Y> Future for Yield<'_, Y> {
     }
 }
 
+/// A [`Future`]-based generator that can yield any number of instances of `Y`.
 pub struct Generator<F, Y> {
     future: F,
     state: State<Y>,
@@ -134,9 +150,21 @@ impl<F, Y> Generator<F, Y> {
     }
 }
 
+/// An iterator item spawned from a generator that returns a result value.
+///
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum GeneratorItem<Y, R> {
     Yield(Y),
     Return(R),
+}
+
+#[must_use]
+pub struct Return<R>(R);
+
+impl<R> From<R> for Return<R> {
+    fn from(value: R) -> Self {
+        Self(value)
+    }
 }
 
 pub trait GeneratorOutput<T> {
@@ -158,15 +186,15 @@ impl<T> GeneratorOutput<T> for () {
     }
 }
 
-impl<T, A, B> GeneratorOutput<T> for Result<A, B> {
-    type Item = GeneratorItem<T, Result<A, B>>;
+impl<T, R> GeneratorOutput<T> for Return<R> {
+    type Item = GeneratorItem<T, R>;
 
     fn create_yield(value: T) -> Self::Item {
         GeneratorItem::Yield(value)
     }
 
-    fn create_return(result: Result<A, B>) -> Option<Self::Item> {
-        Some(GeneratorItem::Return(result))
+    fn create_return(result: Self) -> Option<Self::Item> {
+        Some(GeneratorItem::Return(result.0))
     }
 }
 
@@ -263,8 +291,8 @@ where
 }
 
 fn generator_waker<Y>(state: &State<Y>) -> Waker {
-    unsafe fn clone(_: *const ()) -> RawWaker {
-        RawWaker::new(std::ptr::null(), &VTABLE)
+    unsafe fn clone(data_ptr: *const ()) -> RawWaker {
+        RawWaker::new(data_ptr, &VTABLE)
     }
     unsafe fn wake(_: *const ()) {}
     unsafe fn wake_by_ref(_: *const ()) {}
