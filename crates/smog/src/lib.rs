@@ -27,18 +27,18 @@ impl<Y> Default for State<Y> {
 }
 
 #[derive(Clone)]
-struct Yielder<Y> {
+pub struct Yielder<Y> {
     phantom_data: PhantomData<fn() -> Y>,
 }
 
 impl<Y> Yielder<Y> {
     fn new() -> Self {
         Self {
-            phantom_data: PhantomData::default(),
+            phantom_data: PhantomData,
         }
     }
 
-    pub fn yeeld(&mut self, value: Y) -> Yield<'_, Y> {
+    pub fn yeeld(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
         Yield::new(value)
     }
 }
@@ -53,7 +53,7 @@ impl<Y> Yield<'_, Y> {
     fn new(value: Y) -> Self {
         Self {
             value: Some(value),
-            phantom_data: PhantomData::default(),
+            phantom_data: PhantomData,
         }
     }
 }
@@ -99,7 +99,7 @@ impl<Y> Future for Yield<'_, Y> {
     }
 }
 
-struct Generator<F, Y> {
+pub struct Generator<F, Y> {
     future: F,
     state: State<Y>,
     finished: bool,
@@ -115,12 +115,12 @@ impl<F, Y> Generator<F, Y> {
     }
 }
 
-enum GeneratorItem<Y, R> {
+pub enum GeneratorItem<Y, R> {
     Yield(Y),
     Return(R),
 }
 
-trait GeneratorOutput<T> {
+pub trait GeneratorOutput<T> {
     type Item;
 
     fn create_yield(value: T) -> Self::Item;
@@ -156,7 +156,7 @@ where
     F: Future,
     F::Output: GeneratorOutput<Y>,
 {
-    fn next(self: Pin<&mut Self>) -> Option<<F::Output as GeneratorOutput<Y>>::Item> {
+    pub fn next(self: Pin<&mut Self>) -> Option<<F::Output as GeneratorOutput<Y>>::Item> {
         if self.finished {
             return None;
         }
@@ -192,12 +192,21 @@ struct GeneratorIter<X> {
     pinned: Pin<X>,
 }
 
-trait GeneratorIntoIter<X> {
-    fn into_iter(self) -> GeneratorIter<X>;
+// NB: We can't implement IntoIterator for Pin, which is why we need this wrapper.
+pub trait GeneratorIntoIter<X> {
+    type Item;
+    fn into_iter(self) -> impl Iterator<Item = Self::Item>;
 }
 
-impl<X> GeneratorIntoIter<X> for Pin<X> {
-    fn into_iter(self) -> GeneratorIter<X> {
+impl<F, Y, X> GeneratorIntoIter<X> for Pin<X>
+where
+    F: Future,
+    F::Output: GeneratorOutput<Y>,
+    X: Deref<Target = Generator<F, Y>> + DerefMut,
+{
+    type Item = <F::Output as GeneratorOutput<Y>>::Item;
+
+    fn into_iter(self) -> impl Iterator<Item = <F::Output as GeneratorOutput<Y>>::Item> {
         GeneratorIter { pinned: self }
     }
 }
