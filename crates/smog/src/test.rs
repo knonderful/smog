@@ -3,14 +3,14 @@ use std::pin::pin;
 
 fn generate_multiples(base: usize) -> Generator<impl Future<Output = ()>, usize> {
     {
-        async move |mut yielder: Yielder<_>| {
+        async move |mut ctx: GeneratorContext<_>| {
             let limit = usize::MAX / base;
             for i in 1..limit {
-                yielder.yeeld(i * base).await;
+                ctx.emit(i * base).await;
             }
         }
     }
-    .into()
+        .into()
 }
 
 #[test]

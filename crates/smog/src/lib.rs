@@ -11,15 +11,33 @@ use std::{
 };
 
 const STATE_MAGIC: u32 = 0x32561810;
-
 struct State<Y> {
+    #[cfg(debug_assertions)]
     magic_value: u32,
     yielded: Option<Y>,
+}
+
+impl<Y> State<Y> {
+    #[cfg(debug_assertions)]
+    fn assert_magic_number(&self) {
+        if self.magic_value != STATE_MAGIC {
+            panic!(
+                "Expected state magic value {STATE_MAGIC}, but found {}",
+                self.magic_value
+            );
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn assert_magic_number(&self) {
+        // Do nothing
+    }
 }
 
 impl<Y> Default for State<Y> {
     fn default() -> Self {
         Self {
+            #[cfg(debug_assertions)]
             magic_value: STATE_MAGIC,
             yielded: None,
         }
@@ -27,18 +45,19 @@ impl<Y> Default for State<Y> {
 }
 
 #[derive(Clone)]
-pub struct Yielder<Y> {
+pub struct GeneratorContext<Y> {
     phantom_data: PhantomData<fn() -> Y>,
 }
 
-impl<Y> Yielder<Y> {
+impl<Y> GeneratorContext<Y> {
     fn new() -> Self {
         Self {
             phantom_data: PhantomData,
         }
     }
 
-    pub fn yeeld(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
+    /// Emits (yields) a value from the generator to the caller.
+    pub fn emit(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
         Yield::new(value)
     }
 }
@@ -62,35 +81,35 @@ impl<Y> Future for Yield<'_, Y> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<()> {
-        // SAFETY: We're adhering to pin constraints here.
+        // SAFETY: We're not moving `this` or any of its components around in memory.
         let this = unsafe { self.get_unchecked_mut() };
         match this.value.take() {
             None => Poll::Ready(()),
             Some(value) => {
-                // SAFETY: This depends on the the correct pointer being set in the executor (in
-                //         this case the `Generator::next()` implementation. Since `Yield` can not
-                //         be constructed outside of this module, we should be good. The only thing
-                //         that can happen is if `Yield` is returned from the generator, in which
-                //         case it would escape its context. Followed by a call to poll with another
-                //         executor would cause trouble here.
+                // SAFETY:
+                // This depends on the the correct pointer being set in the executor (in this case
+                // the `Generator::next()` implementation. `Yield` nor `GeneratorContext` can not be
+                // constructed by the user. This means that a `Yield` can only appear inside of a
+                // `Generator`.
+                //
+                // Secondly, `Yield` can not escape its  encapsulating `Future` (async function)
+                // because it is impossible to declare the correct return type:
+                // - `GeneratorContext::emit()` does not name the concrete type.
+                // - `Yield` is constructed with a lifetime tied to the `GeneratorContext` inside
+                //    the `Future`. It is therefor impossible to specify a declare lifetime for the
+                //    `Future<Output=Yield<'a, ...>>`.
                 let state = unsafe {
                     match ctx.waker().data().cast::<State<Y>>().cast_mut().as_mut() {
-                        None => {
-                            panic!("The waker data pointer is not set. Are you running this future in an external executor?");
-                        }
+                        None => unreachable!("BUG: The waker data pointer is not set."),
                         Some(x) => x,
                     }
                 };
 
-                if state.magic_value != STATE_MAGIC {
-                    panic!(
-                        "Expected state magic value {STATE_MAGIC}, but found {}",
-                        state.magic_value
-                    );
-                }
+                // A bug-detection mechanism. It is only enabled in debug build.
+                state.assert_magic_number();
 
                 if state.yielded.replace(value).is_some() {
-                    panic!("Yield future encountered an existing value in the state.");
+                    unreachable!("BUG: Yield future encountered an existing value in the state.");
                 }
 
                 Poll::Pending
@@ -162,18 +181,26 @@ where
         }
 
         // We're putting a pointer to the state on the waker. This pointer will be used by `Yield`
-        // to set the yielded value directly in the state. Since `self` is pinned here, this is OK.
-        // Also, the future (`Yield`) is only
+        // to set the yielded value directly in the state. This would be OK even if `self` were not
+        // pinned here, since the pointer is only accessed inside of the `Future::poll()` below and
+        // we're not moving the generator around in memory during that time.
         let waker = generator_waker(&self.state);
         let mut cx = Context::from_waker(&waker);
 
         unsafe {
+            // SAFETY:
+            // - The future is immediately pinned again.
+            // - The state is not moved in memory in this method.
             let this = self.get_unchecked_mut();
             match Pin::new_unchecked(&mut this.future).poll(&mut cx) {
                 Poll::Pending => {
                     if let Some(value) = this.state.yielded.take() {
                         return Some(F::Output::create_yield(value));
                     }
+
+                    // We can't prevent future implementations from awaiting a foreign future (i.e.
+                    // a future that does not belong to this crate) at compile-time. But we have to
+                    // take into account that the user steps into this trap and detect such cases.
                     panic!(
                         "Underlying task is pending, but we have no yielded value. This means the generator implementation is awaiting an unsupported type of future."
                     );
@@ -226,11 +253,11 @@ where
 
 impl<F, Y, X> From<X> for Generator<F, Y>
 where
-    X: FnOnce(Yielder<Y>) -> F,
+    X: FnOnce(GeneratorContext<Y>) -> F,
 {
     fn from(future_factory: X) -> Self {
         let state = State::default();
-        let future = future_factory(Yielder::new());
+        let future = future_factory(GeneratorContext::new());
         Generator::new(future, state)
     }
 }
@@ -239,11 +266,8 @@ fn generator_waker<Y>(state: &State<Y>) -> Waker {
     unsafe fn clone(_: *const ()) -> RawWaker {
         RawWaker::new(std::ptr::null(), &VTABLE)
     }
-
     unsafe fn wake(_: *const ()) {}
-
     unsafe fn wake_by_ref(_: *const ()) {}
-
     unsafe fn drop(_: *const ()) {}
 
     static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
