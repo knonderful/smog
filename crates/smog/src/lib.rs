@@ -3,7 +3,6 @@
 mod test;
 
 use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
 use std::{
     future::Future,
     pin::Pin,
@@ -167,14 +166,14 @@ impl<R> From<R> for Return<R> {
     }
 }
 
-pub trait GeneratorOutput<T> {
+pub trait GeneratorTypes<T> {
     type Item;
 
     fn create_yield(value: T) -> Self::Item;
     fn create_return(result: Self) -> Option<Self::Item>;
 }
 
-impl<T> GeneratorOutput<T> for () {
+impl<T> GeneratorTypes<T> for () {
     type Item = T;
 
     fn create_yield(value: T) -> Self::Item {
@@ -186,7 +185,7 @@ impl<T> GeneratorOutput<T> for () {
     }
 }
 
-impl<T, R> GeneratorOutput<T> for Return<R> {
+impl<T, R> GeneratorTypes<T> for Return<R> {
     type Item = GeneratorItem<T, R>;
 
     fn create_yield(value: T) -> Self::Item {
@@ -201,9 +200,9 @@ impl<T, R> GeneratorOutput<T> for Return<R> {
 impl<F, Y> Generator<F, Y>
 where
     F: Future,
-    F::Output: GeneratorOutput<Y>,
+    F::Output: GeneratorTypes<Y>,
 {
-    pub fn next(self: Pin<&mut Self>) -> Option<<F::Output as GeneratorOutput<Y>>::Item> {
+    fn advance(self: Pin<&mut Self>) -> Option<<F::Output as GeneratorTypes<Y>>::Item> {
         if self.finished {
             return None;
         }
@@ -242,40 +241,27 @@ where
     }
 }
 
-// NB: We can't implement Iterator for Pin, which is why we need this wrapper.
-struct GeneratorIter<X> {
-    pinned: Pin<X>,
-}
-
-// NB: We can't implement IntoIterator for Pin, which is why we need this wrapper.
-pub trait GeneratorIntoIter<X> {
-    type Item;
-    fn into_iter(self) -> impl Iterator<Item = Self::Item>;
-}
-
-impl<F, Y, X> GeneratorIntoIter<X> for Pin<X>
+impl<'a, F, Y> Iterator for Pin<&'a mut Generator<F, Y>>
 where
     F: Future,
-    F::Output: GeneratorOutput<Y>,
-    X: Deref<Target = Generator<F, Y>> + DerefMut,
+    F::Output: GeneratorTypes<Y>,
 {
-    type Item = <F::Output as GeneratorOutput<Y>>::Item;
+    type Item = <F::Output as GeneratorTypes<Y>>::Item;
 
-    fn into_iter(self) -> impl Iterator<Item = <F::Output as GeneratorOutput<Y>>::Item> {
-        GeneratorIter { pinned: self }
+    fn next(&mut self) -> Option<Self::Item> {
+        self.as_mut().advance()
     }
 }
 
-impl<F, Y, X> Iterator for GeneratorIter<X>
+impl<F, Y> Iterator for Pin<Box<Generator<F, Y>>>
 where
     F: Future,
-    F::Output: GeneratorOutput<Y>,
-    X: Deref<Target = Generator<F, Y>> + DerefMut,
+    F::Output: GeneratorTypes<Y>,
 {
-    type Item = <F::Output as GeneratorOutput<Y>>::Item;
+    type Item = <F::Output as GeneratorTypes<Y>>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.pinned.as_mut().next()
+        self.as_mut().advance()
     }
 }
 
