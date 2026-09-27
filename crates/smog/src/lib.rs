@@ -205,6 +205,8 @@ where
     F: Future<Output = R>,
 {
     pub fn poll_next(self: Pin<&mut Self>) -> GeneratorItem<Y, R> {
+        debug_assert!(!self.finished, "Future was polled after it has finished.");
+
         // We're putting a pointer to the state on the waker. This pointer will be used by `Yield`
         // to set the yielded value directly in the state. This would be OK even if `self` were not
         // pinned here, since the pointer is only accessed inside of the `Future::poll()` below and
@@ -230,7 +232,10 @@ where
                         "Underlying task is pending, but we have no yielded value. This means the generator implementation is awaiting an unsupported type of future."
                     );
                 }
-                Poll::Ready(value) => GeneratorItem::Return(value),
+                Poll::Ready(value) => {
+                    this.finished = true;
+                    GeneratorItem::Return(value)
+                }
             }
         }
     }
@@ -250,9 +255,6 @@ where
             GeneratorItem::Yield(yielded) => Some(F::Output::create_yield(yielded)),
             GeneratorItem::Return(result) => {
                 // SAFETY: Nothing is moved in memory here.
-                unsafe {
-                    self.get_unchecked_mut().finished = true;
-                }
                 F::Output::create_return(result)
             }
         }
@@ -267,6 +269,18 @@ where
         match self.poll_next() {
             GeneratorItem::Yield(yielded) => yielded,
             GeneratorItem::Return(_) => panic!("BUG: Future with return type Never somehow managed to complete."),
+        }
+    }
+}
+
+impl<F, Y, R> Generator<F, Y>
+where
+    F: Future<Output = Return<R>>,
+{
+    pub fn next_item(self: Pin<&mut Self>) -> GeneratorItem<Y, R> {
+        match self.poll_next() {
+            GeneratorItem::Yield(yielded) => GeneratorItem::Yield(yielded),
+            GeneratorItem::Return(Return(result)) => GeneratorItem::Return(result),
         }
     }
 }

@@ -43,17 +43,19 @@ fn test_multiples() {
 
 #[test]
 fn test_multiples_with_return() {
-    let mut expected = vec![
-        GeneratorItem::Return("The base was 12".to_string()),
-        GeneratorItem::Yield(36),
-        GeneratorItem::Yield(24),
-        GeneratorItem::Yield(12),
-    ];
+    let mut expected = vec![36, 24, 12];
     let mut gen = pin!(multiples_with_return(12));
-    for item in &mut gen {
-        let ex = expected.pop().expect("no more items in `expected`");
-        assert_eq!(ex, item);
-    }
+    let result = loop {
+        match gen.as_mut().next_item() {
+            GeneratorItem::Return(result) => break result,
+            GeneratorItem::Yield(item) => {
+                let ex = expected.pop().expect("no more items in `expected`");
+                assert_eq!(ex, item);
+            }
+        }
+    };
+
+    assert_eq!("The base was 12".to_string(), result);
     assert_eq!(None, gen.iter_next());
 }
 
