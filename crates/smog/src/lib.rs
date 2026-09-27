@@ -2,6 +2,9 @@
 #[cfg(test)]
 mod test;
 
+mod never;
+pub use never::Never;
+
 use std::marker::PhantomData;
 use std::{
     future::Future,
@@ -49,7 +52,7 @@ impl<Y> Default for State<Y> {
 
 /// The context inside a generator function.
 ///
-/// This can be used to [`emit`](GeneratorContext::emit) (yield) a value to the caller.
+/// This can be used to yield a value to the caller.
 #[derive(Clone)]
 pub struct GeneratorContext<Y> {
     phantom_data: PhantomData<fn() -> Y>,
@@ -62,11 +65,11 @@ impl<Y> GeneratorContext<Y> {
         }
     }
 
-    /// Emits (yields) a value from the generator to the caller.
+    /// Yields a value from the generator to the caller.
     ///
     /// Be sure to call `.await` on the resulting [`Future`].
     #[must_use]
-    pub fn emit(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
+    pub fn yield_value(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
         Yield::new(value)
     }
 }
@@ -108,7 +111,7 @@ impl<Y> Future for Yield<'_, Y> {
                 //
                 // Secondly, `Yield` can not escape its  encapsulating `Future` (async function)
                 // because it is impossible to declare the correct return type:
-                // - `GeneratorContext::emit()` does not name the concrete type.
+                // - `GeneratorContext::yield_value()` does not name the concrete type.
                 // - `Yield` is constructed with a lifetime tied to the `GeneratorContext` inside
                 //    the `Future`. It is therefor impossible to specify a declare lifetime for the
                 //    `Future<Output=Yield<'a, ...>>`.
@@ -166,17 +169,17 @@ impl<R> From<R> for Return<R> {
     }
 }
 
-pub trait GeneratorTypes<T> {
+pub trait IterableGenerator<Y> {
     type Item;
 
-    fn create_yield(value: T) -> Self::Item;
+    fn create_yield(value: Y) -> Self::Item;
     fn create_return(result: Self) -> Option<Self::Item>;
 }
 
-impl<T> GeneratorTypes<T> for () {
-    type Item = T;
+impl<Y> IterableGenerator<Y> for () {
+    type Item = Y;
 
-    fn create_yield(value: T) -> Self::Item {
+    fn create_yield(value: Y) -> Self::Item {
         value
     }
 
@@ -185,10 +188,10 @@ impl<T> GeneratorTypes<T> for () {
     }
 }
 
-impl<T, R> GeneratorTypes<T> for Return<R> {
-    type Item = GeneratorItem<T, R>;
+impl<Y, R> IterableGenerator<Y> for Return<R> {
+    type Item = GeneratorItem<Y, R>;
 
-    fn create_yield(value: T) -> Self::Item {
+    fn create_yield(value: Y) -> Self::Item {
         GeneratorItem::Yield(value)
     }
 
@@ -197,16 +200,11 @@ impl<T, R> GeneratorTypes<T> for Return<R> {
     }
 }
 
-impl<F, Y> Generator<F, Y>
+impl<F, Y, R> Generator<F, Y>
 where
-    F: Future,
-    F::Output: GeneratorTypes<Y>,
+    F: Future<Output = R>,
 {
-    fn advance(self: Pin<&mut Self>) -> Option<<F::Output as GeneratorTypes<Y>>::Item> {
-        if self.finished {
-            return None;
-        }
-
+    pub fn poll_next(self: Pin<&mut Self>) -> GeneratorItem<Y, R> {
         // We're putting a pointer to the state on the waker. This pointer will be used by `Yield`
         // to set the yielded value directly in the state. This would be OK even if `self` were not
         // pinned here, since the pointer is only accessed inside of the `Future::poll()` below and
@@ -222,7 +220,7 @@ where
             match Pin::new_unchecked(&mut this.future).poll(&mut cx) {
                 Poll::Pending => {
                     if let Some(value) = this.state.yielded.take() {
-                        return Some(F::Output::create_yield(value));
+                        return GeneratorItem::Yield(value);
                     }
 
                     // We can't prevent future implementations from awaiting a foreign future (i.e.
@@ -232,11 +230,43 @@ where
                         "Underlying task is pending, but we have no yielded value. This means the generator implementation is awaiting an unsupported type of future."
                     );
                 }
-                Poll::Ready(output) => {
-                    this.finished = true;
-                    F::Output::create_return(output)
-                }
+                Poll::Ready(value) => GeneratorItem::Return(value),
             }
+        }
+    }
+}
+
+impl<F, Y> Generator<F, Y>
+where
+    F: Future,
+    F::Output: IterableGenerator<Y>,
+{
+    fn iter_next(mut self: Pin<&mut Self>) -> Option<<F::Output as IterableGenerator<Y>>::Item> {
+        if self.finished {
+            return None;
+        }
+
+        match self.as_mut().poll_next() {
+            GeneratorItem::Yield(yielded) => Some(F::Output::create_yield(yielded)),
+            GeneratorItem::Return(result) => {
+                // SAFETY: Nothing is moved in memory here.
+                unsafe {
+                    self.get_unchecked_mut().finished = true;
+                }
+                F::Output::create_return(result)
+            }
+        }
+    }
+}
+
+impl<F, Y> Generator<F, Y>
+where
+    F: Future<Output = Never>,
+{
+    pub fn next_value(self: Pin<&mut Self>) -> Y {
+        match self.poll_next() {
+            GeneratorItem::Yield(yielded) => yielded,
+            GeneratorItem::Return(_) => panic!("BUG: Future with return type Never somehow managed to complete."),
         }
     }
 }
@@ -244,35 +274,24 @@ where
 impl<'a, F, Y> Iterator for Pin<&'a mut Generator<F, Y>>
 where
     F: Future,
-    F::Output: GeneratorTypes<Y>,
+    F::Output: IterableGenerator<Y>,
 {
-    type Item = <F::Output as GeneratorTypes<Y>>::Item;
+    type Item = <F::Output as IterableGenerator<Y>>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.as_mut().advance()
+        self.as_mut().iter_next()
     }
 }
 
 impl<F, Y> Iterator for Pin<Box<Generator<F, Y>>>
 where
     F: Future,
-    F::Output: GeneratorTypes<Y>,
+    F::Output: IterableGenerator<Y>,
 {
-    type Item = <F::Output as GeneratorTypes<Y>>::Item;
+    type Item = <F::Output as IterableGenerator<Y>>::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.as_mut().advance()
-    }
-}
-
-impl<F, Y, X> From<X> for Generator<F, Y>
-where
-    X: FnOnce(GeneratorContext<Y>) -> F,
-{
-    fn from(future_factory: X) -> Self {
-        let state = State::default();
-        let future = future_factory(GeneratorContext::new());
-        Generator::new(future, state)
+        self.as_mut().iter_next()
     }
 }
 
@@ -288,4 +307,13 @@ fn generator_waker<Y>(state: &State<Y>) -> Waker {
 
     let state_ptr = state as *const State<Y>;
     unsafe { Waker::from_raw(RawWaker::new(state_ptr.cast::<()>(), &VTABLE)) }
+}
+
+pub fn generator<F, Y>(future_factory: impl FnOnce(GeneratorContext<Y>) -> F) -> Generator<F, Y>
+where
+    F: Future,
+{
+    let state = State::default();
+    let future = future_factory(GeneratorContext::new());
+    Generator::new(future, state)
 }
