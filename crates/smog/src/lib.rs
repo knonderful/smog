@@ -5,6 +5,8 @@ mod test;
 mod never;
 pub use never::Never;
 
+pub mod future;
+
 use std::marker::PhantomData;
 use std::{
     future::Future,
