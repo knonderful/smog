@@ -1,14 +1,35 @@
-# Smog
+# Gtor
 
-`smog` is a Rust crate that enables execution of `async` functions with interaction between the caller and the callee (often called a _coroutine_).
-This enables users to write state machines that can suspend their execution in an intuitive way.
-This can be useful for many cases, for example:
+`gtor` allows users to write generators in Rust that are easy to write and easy to poll.
 
-- Writing generators instead of delivering results in a `Vec`. ([example](examples/generator/src/main.rs))
-- Writing code that can process input data in small chunks (streaming), yielding intermediate results as they become available. ([example](examples/stream_in/src/main.rs))
-- Softening commitment to a blocking or an async approach by implementing the business logic in coroutines (which can be used in blocking or async).
-- Writing intuitive stateful code for applications that have some sort of event loop (like a computer game or GUI).
-- Naturally leaning toward testable code.
+```rust
+use gtor::{GeneratorItem, generator};
+use std::pin::pin;
 
-`smog` is designed to have a reasonable amount of overhead.
-Additionally, `smog` does not require heap allocation for the coroutine itself.
+#[generator(yield_type = usize)]
+fn example_without_return() {
+  for x in (1..10).rev() {
+    if x > 5 {
+      yield_value!(x);
+    }
+  }
+}
+
+fn main() {
+  let mut expected = [9, 8, 7, 6].into_iter();
+  for val in pin!(example_without_return()) {
+    assert_eq!(expected.next().unwrap(), val);
+  }
+  assert!(expected.next().is_none());
+}
+```
+
+Some highlights about the generators:
+
+* They can yield values.
+* They can take input arguments.
+* They can optionally return a result upon completion.
+* All input arguments, yields and return values can be passed by value or by reference.
+  * The borrow checker prevents any borrowing violations, just like in regular Rust code.
+* They are stackless (i.e. they don't have their own separate stack that is suspended and restored).
+* They can live on the stack (using `pin!()`) or the heap (using `Box::pin()`).

@@ -2,7 +2,7 @@ use super::*;
 use std::pin::pin;
 
 fn multiples(base: usize) -> Generator<impl Future<Output = ()>, usize> {
-    generator(async move |mut ctx: GeneratorContext<_>| {
+    create_generator(async move |mut ctx: GeneratorContext<_>| {
         for i in 1..=3 {
             ctx.yield_value(i * base).await;
         }
@@ -10,7 +10,7 @@ fn multiples(base: usize) -> Generator<impl Future<Output = ()>, usize> {
 }
 
 fn multiples_with_return(base: usize) -> Generator<impl Future<Output = Return<String>>, usize> {
-    generator(async move |mut ctx: GeneratorContext<_>| {
+    create_generator(async move |mut ctx: GeneratorContext<_>| {
         for i in 1..=3 {
             ctx.yield_value(i * base).await;
         }
@@ -20,7 +20,7 @@ fn multiples_with_return(base: usize) -> Generator<impl Future<Output = Return<S
 }
 
 fn infinite(base: usize) -> Generator<impl Future<Output = Never>, usize> {
-    generator(async move |mut ctx: GeneratorContext<_>| {
+    create_generator(async move |mut ctx: GeneratorContext<_>| {
         let mut i = base;
         loop {
             ctx.yield_value(i).await;

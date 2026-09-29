@@ -96,14 +96,14 @@ fn expand_generator(function: &mut ItemFn, yield_type: Type) -> syn::Result<proc
 
     let return_type = match &my_return_type {
         MyReturnType::Unit => quote! { () },
-        MyReturnType::Never => quote! { ::smog::Never },
-        MyReturnType::Type(ret) => quote! { ::smog::Return<#ret> },
+        MyReturnType::Never => quote! { ::gtor::Never },
+        MyReturnType::Type(ret) => quote! { ::gtor::Return<#ret> },
     };
 
     let future_mapper = match &my_return_type {
         MyReturnType::Unit => quote! { ::std::convert::identity },
-        MyReturnType::Never => quote! { ::smog::future::map_to_never },
-        MyReturnType::Type(_) => quote! { ::smog::future::map_to_return },
+        MyReturnType::Never => quote! { ::gtor::future::map_to_never },
+        MyReturnType::Type(_) => quote! { ::gtor::future::map_to_return },
     };
 
     // Return type mappings:
@@ -161,16 +161,16 @@ fn expand_generator(function: &mut ItemFn, yield_type: Type) -> syn::Result<proc
         #(#attrs)*
         #vis fn #name #generics(
             #inputs
-        ) -> ::smog::Generator<
+        ) -> ::gtor::Generator<
             impl ::core::future::Future<Output = #return_type> + use< #use_lifetimes >,
             #yield_type
         >
         #where_clause
         {
-            let future_factory = async move |mut ctx: ::smog::GeneratorContext<#yield_type>| {
+            let future_factory = async move |mut ctx: ::gtor::GeneratorContext<#yield_type>| {
                 #body
             };
-            ::smog::generator_mapped(future_factory, #future_mapper)
+            ::gtor::create_generator_mapped(future_factory, #future_mapper)
         }
     };
 

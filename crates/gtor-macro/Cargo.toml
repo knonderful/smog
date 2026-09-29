@@ -1,5 +1,5 @@
 [package]
-name = "smog-macro"
+name = "gtor-macro"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

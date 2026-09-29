@@ -1,5 +1,4 @@
-use smog::GeneratorItem;
-use smog_macro::generator;
+use gtor::{generator, GeneratorItem};
 use std::pin::pin;
 
 /// A finite generator that only yields values and doesn't have a final result.
@@ -84,7 +83,7 @@ impl Person {
     /// is something like
     ///
     /// ```
-    /// impl ::core::future::Future<Output=::smog::Return<&str>> + use < '_, 'a, >
+    /// impl ::core::future::Future<Output=::gtor::Return<&str>> + use < '_, 'a, >
     /// ```
     ///
     /// Without this Rust would complain in some cases that the function violates lifetimes of the
