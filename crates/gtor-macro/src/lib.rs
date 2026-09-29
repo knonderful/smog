@@ -132,14 +132,16 @@ fn expand_generator(function: &mut ItemFn, yield_type: Type) -> syn::Result<proc
 
     for arg in inputs {
         match arg {
-            FnArg::Receiver(recv) => match &recv.kind {
-                ReceiverKind::Reference(_, lifetime, _) => add_lifetime(lifetime.clone()),
-                _ => {}
-            },
-            FnArg::Typed(pat_type) => match pat_type.ty.as_ref() {
-                Type::Reference(reference) => add_lifetime(reference.lifetime.clone()),
-                _ => {}
-            },
+            FnArg::Receiver(recv) => {
+                if let ReceiverKind::Reference(_, lifetime, _) = &recv.kind {
+                    add_lifetime(lifetime.clone());
+                }
+            }
+            FnArg::Typed(pat_type) => {
+                if let Type::Reference(reference) = pat_type.ty.as_ref() {
+                    add_lifetime(reference.lifetime.clone());
+                }
+            }
         }
     }
 
@@ -150,7 +152,7 @@ fn expand_generator(function: &mut ItemFn, yield_type: Type) -> syn::Result<proc
             apostrophe: Span::call_site(),
             ident,
         };
-        use_lifetimes = quote! { #use_lifetimes #lifetime , };
+        use_lifetimes = quote! { #use_lifetimes #lifetime, };
     }
 
     let where_clause = &function.sig.generics.where_clause;

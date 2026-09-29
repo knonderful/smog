@@ -104,7 +104,6 @@ impl<Y> GeneratorContext<Y> {
     /// Yields a value from the generator to the caller.
     ///
     /// Be sure to call `.await` on the resulting [`Future`].
-    #[must_use]
     pub fn yield_value(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
         Yield::new(value)
     }
@@ -321,7 +320,7 @@ where
     }
 }
 
-impl<'a, F, Y> Iterator for Pin<&'a mut Generator<F, Y>>
+impl<F, Y> Iterator for Pin<&'_ mut Generator<F, Y>>
 where
     F: Future,
     F::Output: IterableGenerator<Y>,
