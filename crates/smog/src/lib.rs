@@ -333,3 +333,15 @@ where
     let future = future_factory(GeneratorContext::new());
     Generator::new(future, state)
 }
+
+pub fn generator_mapped<F, Y, F2>(
+    future_factory: impl FnOnce(GeneratorContext<Y>) -> F,
+    future_map: impl FnOnce(F) -> F2,
+) -> Generator<F2, Y>
+where
+    F: Future,
+{
+    let state = State::default();
+    let future = future_factory(GeneratorContext::new());
+    Generator::new(future_map(future), state)
+}

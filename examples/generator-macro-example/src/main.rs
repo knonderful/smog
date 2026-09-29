@@ -60,6 +60,48 @@ fn example_with_infinity() -> ! {
     }
 }
 
+#[derive(Debug)]
+struct Person {
+    name: String,
+    friends: Vec<Person>,
+}
+
+impl From<&str> for Person {
+    fn from(value: &str) -> Self {
+        Self {
+            name: value.to_string(),
+            friends: vec![],
+        }
+    }
+}
+
+impl Person {
+    fn add_friend(&mut self, name: &str) {
+        self.friends.push(name.into());
+    }
+
+    /// An example of a method with several types of lifetimes. Internally, the generator future
+    /// is something like
+    ///
+    /// ```
+    /// impl ::core::future::Future<Output=::smog::Return<&str>> + use < '_, 'a, >
+    /// ```
+    ///
+    /// Without this Rust would complain in some cases that the function violates lifetimes of the
+    /// passed arguments. Note that there are a few cases where Rust implicitly attaches lifetimes
+    /// to the future, but this is not always the case.
+    #[generator(yield_type = &Person)]
+    fn friends<'a>(&self, prefix: &'a str) -> &str {
+        for f in &self.friends {
+            if f.name.starts_with(prefix) {
+                yield_value!(&f);
+            }
+        }
+
+        self.name.as_str()
+    }
+}
+
 fn main() {
     let fn_name = "example_without_return()";
     for val in pin!(example_without_return()) {
@@ -86,5 +128,24 @@ fn main() {
     for _ in 0..10 {
         let val = gen.as_mut().next_value();
         println!("{fn_name} -> {val}");
+    }
+
+    let mut hank = Person::from("Hank");
+    hank.add_friend("Bob");
+    hank.add_friend("Jimmy");
+    hank.add_friend("Beatrice");
+
+    let fn_name = "Person::friends()";
+    for item in pin!(hank.friends("B")) {
+        match item {
+            GeneratorItem::Yield(friend) => println!("{fn_name} -> Yield({:?})", friend),
+            GeneratorItem::Return(me) => println!("{fn_name} -> Return({:?})", me),
+        }
+
+        // hank.add_friend("Yono");
+        // ^^^^
+        // This wouldn't compile because the hank's lifetime is bound to the future. So as long as
+        // we have a reference to the future (or to the generator that contains the future), we
+        // can't modify hank.
     }
 }

@@ -1,17 +1,19 @@
 use proc_macro::TokenStream;
+use proc_macro2::{Ident, Span};
 use quote::quote;
+use std::collections::BTreeSet;
 use syn::{
     parse_macro_input,
     visit_mut::{self, VisitMut},
-    Expr, ItemFn, ReturnType, Stmt, StmtMacro, Token, Type,
+    Expr, FnArg, ItemFn, Lifetime, ReceiverKind, ReturnType, Stmt, StmtMacro, Token, Type,
 };
 
 #[proc_macro_attribute]
 pub fn generator(attr: TokenStream, input: TokenStream) -> TokenStream {
-    let yield_type = parse_macro_input!(attr as GeneratorArgs).yield_type;
+    let args = parse_macro_input!(attr as GeneratorArgs);
     let mut function = parse_macro_input!(input as ItemFn);
 
-    let result = expand_generator(&mut function, yield_type);
+    let result = expand_generator(&mut function, args.yield_type);
 
     match result {
         Ok(tokens) => tokens.into(),
@@ -23,21 +25,39 @@ struct GeneratorArgs {
     yield_type: Type,
 }
 
+impl GeneratorArgs {
+    fn parse_yield_type(input: &syn::parse::ParseStream<'_>) -> syn::Result<Type> {
+        input.parse()
+    }
+}
+
 impl syn::parse::Parse for GeneratorArgs {
     fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
-        let name: syn::Ident = input.parse()?;
+        let full_span = input.span();
+        let mut yield_type = None;
 
-        if name != "yield_type" {
-            return Err(syn::Error::new(name.span(), "expected `yield_type = Type`"));
+        while !input.is_empty() {
+            let name = input.parse::<Ident>()?;
+            input.parse::<Token![=]>()?;
+
+            match name.to_string().as_str() {
+                "yield_type" => {
+                    if yield_type.is_some() {
+                        return Err(syn::Error::new(name.span(), "duplicate `yield_type`"));
+                    }
+                    yield_type = Some(Self::parse_yield_type(&input)?)
+                }
+                other => return Err(syn::Error::new(name.span(), format!("invalid attribute `{other}`"))),
+            }
+
+            if !input.is_empty() {
+                input.parse::<Token![,]>()?;
+            }
         }
 
-        input.parse::<Token![=]>()?;
-
-        let yield_type = input.parse()?;
-
-        if !input.is_empty() {
-            return Err(input.error("unexpected tokens"));
-        }
+        let Some(yield_type) = yield_type else {
+            return Err(syn::Error::new(full_span, "missing attribute `yield_type`"));
+        };
 
         Ok(Self { yield_type })
     }
@@ -58,10 +78,6 @@ fn expand_generator(function: &mut ItemFn, yield_type: Type) -> syn::Result<proc
     //     ctx.yield_value(expression).await;
     let mut rewriter = YieldRewriter;
     rewriter.visit_block_mut(body);
-
-    // Keep the original function arguments.
-    //
-    // The generated function itself does NOT receive GeneratorContext.
 
     let my_return_type = match &function.sig.output {
         ReturnType::Default => MyReturnType::Unit,
@@ -84,10 +100,10 @@ fn expand_generator(function: &mut ItemFn, yield_type: Type) -> syn::Result<proc
         MyReturnType::Type(ret) => quote! { ::smog::Return<#ret> },
     };
 
-    let future_mapping = match &my_return_type {
-        MyReturnType::Unit => quote! { future },
-        MyReturnType::Never => quote! { future },
-        MyReturnType::Type(_) => quote! { ::smog::future::map_to_return(future) },
+    let future_mapper = match &my_return_type {
+        MyReturnType::Unit => quote! { ::std::convert::identity },
+        MyReturnType::Never => quote! { ::smog::future::map_to_never },
+        MyReturnType::Type(_) => quote! { ::smog::future::map_to_return },
     };
 
     // Return type mappings:
@@ -103,11 +119,42 @@ fn expand_generator(function: &mut ItemFn, yield_type: Type) -> syn::Result<proc
     let name = &function.sig.ident;
     let generics = &function.sig.generics;
     let inputs = &function.sig.inputs;
+
+    // Collect all the input lifetimes...
+    let mut lifetime_idents: BTreeSet<Ident> = BTreeSet::new();
+    let mut add_lifetime = |lifetime: Option<Lifetime>| {
+        lifetime_idents.insert(
+            lifetime
+                .map(|lt| lt.ident)
+                .unwrap_or_else(|| Ident::new("_", Span::call_site())),
+        );
+    };
+
+    for arg in inputs {
+        match arg {
+            FnArg::Receiver(recv) => match &recv.kind {
+                ReceiverKind::Reference(_, lifetime, _) => add_lifetime(lifetime.clone()),
+                _ => {}
+            },
+            FnArg::Typed(pat_type) => match pat_type.ty.as_ref() {
+                Type::Reference(reference) => add_lifetime(reference.lifetime.clone()),
+                _ => {}
+            },
+        }
+    }
+
+    // ... and generate a `+ use < '_, 'a, >` to append to the future
+    let mut use_lifetimes = quote! {};
+    for ident in lifetime_idents {
+        let lifetime = Lifetime {
+            apostrophe: Span::call_site(),
+            ident,
+        };
+        use_lifetimes = quote! { #use_lifetimes #lifetime , };
+    }
+
     let where_clause = &function.sig.generics.where_clause;
 
-    // Preserve asyncness? The outer function must NOT itself be async.
-    //
-    // The asyncness is supplied by the generated closure instead.
     let body = &function.block;
 
     let expanded = quote! {
@@ -115,18 +162,15 @@ fn expand_generator(function: &mut ItemFn, yield_type: Type) -> syn::Result<proc
         #vis fn #name #generics(
             #inputs
         ) -> ::smog::Generator<
-            impl ::core::future::Future<Output = #return_type>,
+            impl ::core::future::Future<Output = #return_type> + use< #use_lifetimes >,
             #yield_type
         >
         #where_clause
         {
-            let future_factory = move |mut ctx: ::smog::GeneratorContext<usize>| {
-                let future = async move {
-                    #body
-                };
-                #future_mapping
+            let future_factory = async move |mut ctx: ::smog::GeneratorContext<#yield_type>| {
+                #body
             };
-            ::smog::generator(future_factory)
+            ::smog::generator_mapped(future_factory, #future_mapper)
         }
     };
 
@@ -136,26 +180,7 @@ fn expand_generator(function: &mut ItemFn, yield_type: Type) -> syn::Result<proc
 struct YieldRewriter;
 
 impl VisitMut for YieldRewriter {
-    // This handles `yield_value!(expr)` when it occurs as an expression
-    // rather than as a statement.
-    // fn visit_expr_mut(&mut self, expr: &mut Expr) {
-    //     if let Expr::Macro(ExprMacro { mac, .. }) = expr {
-    //         if mac.path.is_ident("yield_value") {
-    //             let tokens = mac.tokens.clone();
-    //
-    //             *expr = syn::parse_quote! {
-    //                 ctx.yield_value(#tokens).await
-    //             };
-    //
-    //             return;
-    //         }
-    //     }
-    //
-    //     visit_mut::visit_expr_mut(self, expr);
-    // }
-
     fn visit_stmt_mut(&mut self, stmt: &mut Stmt) {
-        // `yield_value!(expr);` is parsed as `Stmt::Macro`.
         if let Stmt::Macro(StmtMacro {
             attrs: _,
             mac,
@@ -168,12 +193,6 @@ impl VisitMut for YieldRewriter {
                 let expr: Expr = syn::parse_quote! {
                     ctx.yield_value(#tokens).await
                 };
-
-                // Preserve any attributes that were attached to the
-                // original macro invocation.
-                // if !attrs.is_empty() {
-                //     expr.attrs_mut().extend(attrs.iter().cloned());
-                // }
 
                 *stmt = Stmt::Expr(expr, *semi_token);
 
