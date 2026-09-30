@@ -1,0 +1,29 @@
+error[E0106]: missing lifetime specifier
+ --> tests/macro_probes/f4_two_elided_lifetimes.rs:4:1
+  |
+4 | #[generator(yield_type = usize)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected named lifetime parameter
+5 | fn g(a: &str, b: &str) {
+  |         ----     ----
+  |
+  = help: this function's return type contains a borrowed value, but the signature does not say whether it is borrowed from `a` or `b`
+  = note: this error originates in the attribute macro `generator` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider introducing a named lifetime parameter
+  |
+4 + 'a
+5 ~ fn g<'a>(a: &'a str, b: &'a str) {
+  |
+
+error[E0700]: hidden type for `impl Future<Output = ()>` captures lifetime that does not appear in bounds
+ --> tests/macro_probes/f4_two_elided_lifetimes.rs:4:1
+  |
+4 | #[generator(yield_type = usize)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ opaque type defined here
+5 | fn g(a: &str, b: &str) {
+  |         ---- hidden type `{async closure body@$DIR/tests/macro_probes/f4_two_elided_lifetimes.rs:4:1: 4:33}` captures the anonymous lifetime defined here
+  |
+  = note: this error originates in the attribute macro `generator` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: add `'_` to the `use<...>` bound to explicitly capture it
+  |
+4 | #[generator(yield_type = usize)], '_
+  |                                 ++++

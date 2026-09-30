@@ -1,0 +1,5 @@
+error: cannot find macro `yield_value` in this scope
+ --> tests/macro_probes/f6_yield_in_match_arm.rs:7:20
+  |
+7 |         Some(x) => yield_value!(x),
+  |                    ^^^^^^^^^^^

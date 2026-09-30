@@ -1,0 +1,13 @@
+error[E0700]: hidden type for `impl Future<Output = ()>` captures lifetime that does not appear in bounds
+ --> tests/macro_probes/f4_nested_lifetime.rs:4:1
+  |
+4 | #[generator(yield_type = usize)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ opaque type defined here
+5 | fn g<'a>(a: Option<&'a str>) {
+  |      -- hidden type `{async closure body@$DIR/tests/macro_probes/f4_nested_lifetime.rs:4:1: 4:33}` captures the lifetime `'a` as defined here
+  |
+  = note: this error originates in the attribute macro `generator` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: add `'a` to the `use<...>` bound to explicitly capture it
+  |
+4 | #[generator(yield_type = usize)'a]
+  |                                ++
