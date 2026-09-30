@@ -7,3 +7,6 @@ license.workspace = true
 
 [dependencies]
 gtor-macro = { workspace = true }
+
+[dev-dependencies]
+trybuild = "1.0"
