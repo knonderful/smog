@@ -246,14 +246,14 @@ where
         // to set the yielded value directly in the state. This would be OK even if `self` were not
         // pinned here, since the pointer is only accessed inside of the `Future::poll()` below and
         // we're not moving the generator around in memory during that time.
-        let waker = generator_waker(&self.state);
-        let mut cx = Context::from_waker(&waker);
 
         unsafe {
             // SAFETY:
             // - The future is immediately pinned again.
             // - The state is not moved in memory in this method.
             let this = self.get_unchecked_mut();
+            let waker = generator_waker(&mut this.state);
+            let mut cx = Context::from_waker(&waker);
             match Pin::new_unchecked(&mut this.future).poll(&mut cx) {
                 Poll::Pending => {
                     if let Some(value) = this.state.yielded.take() {
@@ -344,7 +344,7 @@ where
     }
 }
 
-fn generator_waker<Y>(state: &State<Y>) -> Waker {
+fn generator_waker<Y>(state: &mut State<Y>) -> Waker {
     unsafe fn clone(data_ptr: *const ()) -> RawWaker {
         RawWaker::new(data_ptr, &VTABLE)
     }
@@ -354,7 +354,7 @@ fn generator_waker<Y>(state: &State<Y>) -> Waker {
 
     static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
 
-    let state_ptr = state as *const State<Y>;
+    let state_ptr = state as *mut State<Y>;
     unsafe { Waker::from_raw(RawWaker::new(state_ptr.cast::<()>(), &VTABLE)) }
 }
 
