@@ -1,0 +1,25 @@
+error[E0133]: call to unsafe function `GeneratorContext::<Y>::yield_value` is unsafe and requires unsafe function or block
+  --> tests/macro_probes/f1_escaped_context_writes_through_foreign_waker.rs:29:25
+   |
+29 |     let mut _fut = pin!(ctx.yield_value(0x1122_3344_5566_7788));
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+warning: variable does not need to be mutable
+  --> tests/macro_probes/f1_escaped_context_writes_through_foreign_waker.rs:23:9
+   |
+23 |     let mut buf = Box::new([FILL; 256]);
+   |         ----^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `buf`
+  --> tests/macro_probes/f1_escaped_context_writes_through_foreign_waker.rs:23:9
+   |
+23 |     let mut buf = Box::new([FILL; 256]);
+   |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_buf`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
