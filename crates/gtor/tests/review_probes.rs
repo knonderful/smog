@@ -8,37 +8,7 @@ use std::cell::Cell;
 use std::pin::pin;
 
 // -- NOTE: Finding 1 fixed and moved to failing compilations.
-
-// ---------------------------------------------------------------------------------------------
-// Finding 3 (lib.rs:92): `#[derive(Clone)]` on `GeneratorContext` lets two `Yield` futures be
-// alive at once, which the `'_` lifetime on `yield_value` was supposed to prevent.
-// ---------------------------------------------------------------------------------------------
-
-
-//
-// #[test]
-// #[should_panic(expected = "BUG: Yield future encountered an existing value in the state.")]
-// fn finding_3_clone_allows_two_live_yields() {
-//     let mut gen = pin!(create_generator(async move |mut ctx: GeneratorContext<u32>| {
-//         let mut ctx2 = ctx.clone();
-//         // SAFETY: `ctx` and `ctx2` are called in the right scope.
-//         unsafe {
-//             Join {
-//                 a: Some(Box::pin(ctx.yield_value(1))),
-//                 b: Some(Box::pin(ctx2.yield_value(2))),
-//             }
-//             .await;
-//         }
-//     }));
-//
-//     let _ = gen.as_mut().poll_next();
-// }
-//
-// /// Same defect, without any executor trickery: with `Clone` the user can simply forget to
-// /// `.await` one yield and start another, and the crate's `unreachable!` path is reachable.
-// #[test]
-// #[should_panic(expected = "BUG: Yield future encountered an existing value in the state.")]
-
+// -- NOTE: Finding 3 fixed and moved to failing compilations.
 
 // ---------------------------------------------------------------------------------------------
 // Sanity: the intended use still works, so the probes above are not "everything panics".
