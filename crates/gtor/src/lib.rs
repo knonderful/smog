@@ -89,7 +89,6 @@ impl<Y> Default for State<Y> {
 /// The context inside a generator function.
 ///
 /// This can be used to yield a value to the caller.
-#[derive(Clone)]
 pub struct GeneratorContext<Y> {
     phantom_data: PhantomData<fn() -> Y>,
 }
