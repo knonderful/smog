@@ -3,16 +3,16 @@
 Tests written to verify the findings of the 2026-09-30 code review. All of them use only the
 safe, public API of `gtor`.
 
-| Finding | Probe | Command |
-|---------|-------|---------|
-| 1 `Yield::poll` trusts the waker data pointer | `crates/gtor/tests/review_probes.rs`, `finding_1_*` | `cargo test -p gtor --test review_probes` (debug and `--release`) |
-| 2 state pointer derived from `&State` | crate's own `test::test_infinite` under Miri | `cargo +nightly miri test -p gtor --lib` |
-| 3 `Clone` on `GeneratorContext` | `review_probes.rs`, `finding_3_*` | as for finding 1 |
-| 4 `use<..>` incomplete | `crates/gtor/tests/macro_probes/f4_*.rs` + `.stderr` | `cargo test -p gtor --test macro_probes` |
-| 5 MSRV 1.84 too low | pristine checkout without trybuild | `cargo +1.84.1 check -p gtor --tests` |
-| 6 `yield_value!` in expression position | `macro_probes/f6_yield_in_match_arm.rs` | as for finding 4 |
-| 7 `ctx` hygiene | `macro_probes/f7_ctx_shadowing.rs` | as for finding 4 |
-| 9 example package name | none needed | `cargo run -p gtor-macro-example` |
+| Status | Finding                                       | Probe                                                | Command                                                           |
+|--------|-----------------------------------------------|------------------------------------------------------|-------------------------------------------------------------------|
+| Fixed  | 1 `Yield::poll` trusts the waker data pointer | `crates/gtor/tests/review_probes.rs`, `finding_1_*`  | `cargo test -p gtor --test review_probes` (debug and `--release`) |
+| Fixed  | 2 state pointer derived from `&State`         | crate's own `test::test_infinite` under Miri         | `cargo +nightly miri test -p gtor --lib`                          |
+| Fixed  | 3 `Clone` on `GeneratorContext`               | `review_probes.rs`, `finding_3_*`                    | as for finding 1                                                  |
+| Open   | 4 `use<..>` incomplete                        | `crates/gtor/tests/macro_probes/f4_*.rs` + `.stderr` | `cargo test -p gtor --test macro_probes`                          |
+| Open   | 5 MSRV 1.84 too low                           | pristine checkout without trybuild                   | `cargo +1.84.1 check -p gtor --tests`                             |
+| Open   | 6 `yield_value!` in expression position       | `macro_probes/f6_yield_in_match_arm.rs`              | as for finding 4                                                  |
+| Open   | 7 `ctx` hygiene                               | `macro_probes/f7_ctx_shadowing.rs`                   | as for finding 4                                                  |
+| Open   | 9 example package name                        | none needed                                          | `cargo run -p gtor-macro-example`                                 |
 
 Results on 2026-09-30, rustc 1.98.1 stable, nightly Miri, 1.84.1:
 
