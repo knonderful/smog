@@ -1,0 +1,15 @@
+error[E0599]: no method named `yield_value` found for type `usize` in the current scope
+ --> tests/macro_probes/f7_ctx_shadowing.rs:4:1
+  |
+4 | #[generator(yield_type = usize)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `usize`
+  |
+note: there's an earlier shadowed binding `ctx` of type `GeneratorContext<usize>` that has method `yield_value` available
+ --> tests/macro_probes/f7_ctx_shadowing.rs:4:1
+  |
+4 | #[generator(yield_type = usize)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ctx` of type `GeneratorContext<usize>` that has method `yield_value` defined earlier here
+5 | fn g() {
+6 |     let ctx = 5usize;
+  |         --- earlier `ctx` shadowed here with type `usize`
+  = note: this error originates in the attribute macro `generator` (in Nightly builds, run with -Z macro-backtrace for more info)

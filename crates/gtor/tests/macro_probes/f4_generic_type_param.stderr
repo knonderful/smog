@@ -1,0 +1,9 @@
+error: `impl Trait` must mention all type parameters in scope in `use<...>`
+ --> tests/macro_probes/f4_generic_type_param.rs:4:1
+  |
+4 | #[generator(yield_type = T)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+5 | fn g<T: Clone>(x: T) {
+  |      - type parameter is implicitly captured by this `impl Trait`
+  |
+  = note: currently, all type parameters are required to be mentioned in the precise captures list

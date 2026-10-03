@@ -89,7 +89,6 @@ impl<Y> Default for State<Y> {
 /// The context inside a generator function.
 ///
 /// This can be used to yield a value to the caller.
-#[derive(Clone)]
 pub struct GeneratorContext<Y> {
     phantom_data: PhantomData<fn() -> Y>,
 }
@@ -104,7 +103,18 @@ impl<Y> GeneratorContext<Y> {
     /// Yields a value from the generator to the caller.
     ///
     /// Be sure to call `.await` on the resulting [`Future`].
-    pub fn yield_value(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
+    ///
+    /// # Safety
+    ///
+    /// The underlying `Yield` implementation relies on the future being polled in the `Future` that
+    /// received this `GeneratorContext` instance. Extracting this `GeneratorContext` from the
+    /// `Future` original future or passing this `GeneratorContext` to another (inner) `Generator`
+    /// or executor and then `await`ing it can lead to undefined behavior. It is therefor the
+    /// caller's responsibility to uphold this invariant.
+    ///
+    /// Note that the easiest (and trivial) way to uphold this is to use the
+    /// [`#[generator]`](generator) macro for creating the `Generator`.
+    pub unsafe fn yield_value(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
         Yield::new(value)
     }
 }
@@ -141,15 +151,8 @@ impl<Y> Future for Yield<'_, Y> {
                 // SAFETY:
                 // This depends on the the correct pointer being set in the executor (in this case
                 // the `Generator::next()` implementation. `Yield` nor `GeneratorContext` can not be
-                // constructed by the user. This means that a `Yield` can only appear inside of a
-                // `Generator`.
-                //
-                // Secondly, `Yield` can not escape its  encapsulating `Future` (async function)
-                // because it is impossible to declare the correct return type:
-                // - `GeneratorContext::yield_value()` does not name the concrete type.
-                // - `Yield` is constructed with a lifetime tied to the `GeneratorContext` inside
-                //    the `Future`. It is therefor impossible to specify a declare lifetime for the
-                //    `Future<Output=Yield<'a, ...>>`.
+                // constructed by the user directly. Additionally, see the safety notes on
+                // `GeneratorContext::yield_value()` for more context.
                 let state = unsafe {
                     match ctx.waker().data().cast::<State<Y>>().cast_mut().as_mut() {
                         None => unreachable!("BUG: The waker data pointer is not set."),
@@ -246,14 +249,14 @@ where
         // to set the yielded value directly in the state. This would be OK even if `self` were not
         // pinned here, since the pointer is only accessed inside of the `Future::poll()` below and
         // we're not moving the generator around in memory during that time.
-        let waker = generator_waker(&self.state);
-        let mut cx = Context::from_waker(&waker);
 
         unsafe {
             // SAFETY:
             // - The future is immediately pinned again.
             // - The state is not moved in memory in this method.
             let this = self.get_unchecked_mut();
+            let waker = generator_waker(&mut this.state);
+            let mut cx = Context::from_waker(&waker);
             match Pin::new_unchecked(&mut this.future).poll(&mut cx) {
                 Poll::Pending => {
                     if let Some(value) = this.state.yielded.take() {
@@ -344,7 +347,7 @@ where
     }
 }
 
-fn generator_waker<Y>(state: &State<Y>) -> Waker {
+fn generator_waker<Y>(state: &mut State<Y>) -> Waker {
     unsafe fn clone(data_ptr: *const ()) -> RawWaker {
         RawWaker::new(data_ptr, &VTABLE)
     }
@@ -354,7 +357,7 @@ fn generator_waker<Y>(state: &State<Y>) -> Waker {
 
     static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
 
-    let state_ptr = state as *const State<Y>;
+    let state_ptr = state as *mut State<Y>;
     unsafe { Waker::from_raw(RawWaker::new(state_ptr.cast::<()>(), &VTABLE)) }
 }
 

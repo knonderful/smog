@@ -4,7 +4,10 @@ use std::pin::pin;
 fn multiples(base: usize) -> Generator<impl Future<Output = ()>, usize> {
     create_generator(async move |mut ctx: GeneratorContext<_>| {
         for i in 1..=3 {
-            ctx.yield_value(i * base).await;
+            // SAFETY: `ctx` is called in the right scope.
+            unsafe {
+                ctx.yield_value(i * base).await;
+            }
         }
     })
 }
@@ -12,7 +15,10 @@ fn multiples(base: usize) -> Generator<impl Future<Output = ()>, usize> {
 fn multiples_with_return(base: usize) -> Generator<impl Future<Output = Return<String>>, usize> {
     create_generator(async move |mut ctx: GeneratorContext<_>| {
         for i in 1..=3 {
-            ctx.yield_value(i * base).await;
+            // SAFETY: `ctx` is called in the right scope.
+            unsafe {
+                ctx.yield_value(i * base).await;
+            }
         }
 
         format!("The base was {base}").into()
@@ -23,7 +29,10 @@ fn infinite(base: usize) -> Generator<impl Future<Output = Never>, usize> {
     create_generator(async move |mut ctx: GeneratorContext<_>| {
         let mut i = base;
         loop {
-            ctx.yield_value(i).await;
+            // SAFETY: `ctx` is called in the right scope.
+            unsafe {
+                ctx.yield_value(i).await;
+            }
             i %= 3 * base;
             i += base;
         }

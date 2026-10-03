@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `GeneratorContext<Y>` in the current scope
+  --> tests/macro_probes/f3_clone_lets_second_yield_start_before_first_finishes.rs:14:28
+   |
+14 |         let mut ctx2 = ctx.clone();
+   |                            ^^^^^ method not found in `GeneratorContext<u32>`
