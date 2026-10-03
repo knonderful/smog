@@ -104,7 +104,18 @@ impl<Y> GeneratorContext<Y> {
     /// Yields a value from the generator to the caller.
     ///
     /// Be sure to call `.await` on the resulting [`Future`].
-    pub fn yield_value(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
+    ///
+    /// # Safety
+    ///
+    /// The underlying `Yield` implementation relies on the future being polled in the `Future` that
+    /// received this `GeneratorContext` instance. Extracting this `GeneratorContext` from the
+    /// `Future` original future or passing this `GeneratorContext` to another (inner) `Generator`
+    /// or executor and then `await`ing it can lead to undefined behavior. It is therefor the
+    /// caller's responsibility to uphold this invariant.
+    ///
+    /// Note that the easiest (and trivial) way to uphold this is to use the
+    /// [`#[generator]`](generator) macro for creating the `Generator`.
+    pub unsafe fn yield_value(&mut self, value: Y) -> impl Future<Output = ()> + '_ {
         Yield::new(value)
     }
 }
@@ -141,15 +152,8 @@ impl<Y> Future for Yield<'_, Y> {
                 // SAFETY:
                 // This depends on the the correct pointer being set in the executor (in this case
                 // the `Generator::next()` implementation. `Yield` nor `GeneratorContext` can not be
-                // constructed by the user. This means that a `Yield` can only appear inside of a
-                // `Generator`.
-                //
-                // Secondly, `Yield` can not escape its  encapsulating `Future` (async function)
-                // because it is impossible to declare the correct return type:
-                // - `GeneratorContext::yield_value()` does not name the concrete type.
-                // - `Yield` is constructed with a lifetime tied to the `GeneratorContext` inside
-                //    the `Future`. It is therefor impossible to specify a declare lifetime for the
-                //    `Future<Output=Yield<'a, ...>>`.
+                // constructed by the user directly. Additionally, see the safety notes on
+                // `GeneratorContext::yield_value()` for more context.
                 let state = unsafe {
                     match ctx.waker().data().cast::<State<Y>>().cast_mut().as_mut() {
                         None => unreachable!("BUG: The waker data pointer is not set."),

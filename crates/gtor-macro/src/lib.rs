@@ -193,7 +193,8 @@ impl VisitMut for YieldRewriter {
                 let tokens = mac.tokens.clone();
 
                 let expr: Expr = syn::parse_quote! {
-                    ctx.yield_value(#tokens).await
+                    // SAFETY: The context is guaranteed to be in the correct scope.
+                    unsafe { ctx.yield_value(#tokens).await }
                 };
 
                 *stmt = Stmt::Expr(expr, *semi_token);
