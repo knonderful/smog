@@ -8,6 +8,8 @@ fn macro_probes() {
     t.pass("tests/macro_probes/control_single_lifetime.rs");
     t.compile_fail("tests/macro_probes/f1_escaped_context_awaited_in_other_generator.rs");
     t.compile_fail("tests/macro_probes/f1_escaped_context_writes_through_foreign_waker.rs");
+    t.compile_fail("tests/macro_probes/f3_clone_allows_two_live_yields.rs");
+    t.compile_fail("tests/macro_probes/f3_clone_lets_second_yield_start_before_first_finishes.rs");
     t.compile_fail("tests/macro_probes/f4_generic_type_param.rs");
     t.compile_fail("tests/macro_probes/f4_two_elided_lifetimes.rs");
     t.compile_fail("tests/macro_probes/f4_nested_lifetime.rs");
